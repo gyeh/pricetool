@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Warm cream/beige background */
+    --background: 30 40% 98%;
+    --foreground: 20 25% 15%;
+
+    --card: 30 30% 97%;
+    --card-foreground: 20 25% 15%;
+
+    --popover: 30 30% 97%;
+    --popover-foreground: 20 25% 15%;
+
+    /* Warm terracotta primary */
+    --primary: 18 60% 55%;
+    --primary-foreground: 30 40% 98%;
+
+    /* Warm sand secondary */
+    --secondary: 35 30% 90%;
+    --secondary-foreground: 20 25% 25%;
+
+    --muted: 30 20% 92%;
+    --muted-foreground: 20 15% 45%;
+
+    /* Warm coral accent */
+    --accent: 15 70% 92%;
+    --accent-foreground: 18 60% 40%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 30 40% 98%;
+
+    --border: 30 20% 88%;
+    --input: 30 20% 88%;
+    --ring: 18 60% 55%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 20 25% 10%;
+    --foreground: 30 20% 95%;
+
+    --card: 20 25% 12%;
+    --card-foreground: 30 20% 95%;
+
+    --popover: 20 25% 12%;
+    --popover-foreground: 30 20% 95%;
+
+    --primary: 18 60% 55%;
+    --primary-foreground: 20 25% 10%;
+
+    --secondary: 20 20% 20%;
+    --secondary-foreground: 30 20% 95%;
+
+    --muted: 20 20% 18%;
+    --muted-foreground: 30 15% 60%;
+
+    --accent: 20 25% 18%;
+    --accent-foreground: 30 20% 95%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 30 20% 95%;
+
+    --border: 20 20% 20%;
+    --input: 20 20% 20%;
+    --ring: 18 60% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Custom warm styling */
+.warm-gradient {
+  background: linear-gradient(
+    135deg,
+    hsl(30 40% 98%) 0%,
+    hsl(35 35% 95%) 50%,
+    hsl(25 30% 93%) 100%
+  );
+}
+
+.warm-card {
+  @apply bg-card rounded-xl border border-border/50 shadow-sm;
+  background: linear-gradient(
+    145deg,
+    hsl(30 30% 98%) 0%,
+    hsl(30 25% 96%) 100%
+  );
+}
+
+.search-input {
+  @apply w-full px-6 py-4 text-lg rounded-2xl border-2 border-border/60
+         bg-background/80 backdrop-blur-sm
+         focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary
+         transition-all duration-200 ease-in-out
+         placeholder:text-muted-foreground/60;
+}
