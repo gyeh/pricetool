@@ -11,6 +11,7 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -27,7 +28,7 @@ const defaultBatchSize = 1000
 
 func main() {
 	// CLI flags
-	jsonFile := flag.String("file", "", "Path to the JSON file to parse")
+	inputFile := flag.String("file", "", "Path to the JSON or CSV file to parse")
 	dbHost := flag.String("host", "localhost", "PostgreSQL host")
 	dbPort := flag.Int("port", 5432, "PostgreSQL port")
 	dbUser := flag.String("user", "postgres", "PostgreSQL user")
@@ -38,8 +39,8 @@ func main() {
 
 	flag.Parse()
 
-	if *jsonFile == "" && !*initSchema {
-		fmt.Println("Usage: pricetool -file <json_file> [options]")
+	if *inputFile == "" && !*initSchema {
+		fmt.Println("Usage: pricetool -file <json_or_csv_file> [options]")
 		fmt.Println("\nOptions:")
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -76,14 +77,21 @@ func main() {
 			log.Fatalf("Failed to initialize schema: %v", err)
 		}
 		log.Println("Schema initialized successfully")
-		if *jsonFile == "" {
+		if *inputFile == "" {
 			return
 		}
 	}
 
-	// Stream and process JSON file
-	if err := streamProcessJSON(ctx, pool, *jsonFile, *batchSize); err != nil {
-		log.Fatalf("Failed to process JSON file: %v", err)
+	// Detect file type and process accordingly
+	if strings.HasSuffix(strings.ToLower(*inputFile), ".csv") {
+		if err := streamProcessCSV(ctx, pool, *inputFile, *batchSize); err != nil {
+			log.Fatalf("Failed to process CSV file: %v", err)
+		}
+	} else {
+		// Default to JSON processing
+		if err := streamProcessJSON(ctx, pool, *inputFile, *batchSize); err != nil {
+			log.Fatalf("Failed to process JSON file: %v", err)
+		}
 	}
 	log.Println("Data import completed successfully")
 }
@@ -91,6 +99,141 @@ func main() {
 func initializeSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, schema)
 	return err
+}
+
+// streamProcessCSV processes a large CSV file using streaming to minimize memory usage
+func streamProcessCSV(ctx context.Context, pool *pgxpool.Pool, filePath string, batchSize int) error {
+	reader, err := NewCSVStreamReader(filePath)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	// Read CSV header
+	header, err := reader.ReadHeader()
+	if err != nil {
+		return fmt.Errorf("failed to read CSV header: %w", err)
+	}
+
+	log.Printf("Detected CSV format: %s", reader.Format())
+	log.Printf("Hospital: %s, Version: %s", header.HospitalName, header.Version)
+
+	// Insert hospital from CSV header
+	hospitalID, err := insertCSVHospitalHeader(ctx, pool, header)
+	if err != nil {
+		return fmt.Errorf("failed to insert hospital: %w", err)
+	}
+	log.Printf("Inserted hospital '%s' with ID: %d", header.HospitalName, hospitalID)
+
+	// Stream and process items
+	var count int64
+	var tx pgx.Tx
+	var queries *db.Queries
+	var batchCount int
+
+	// Start first transaction
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	queries = db.New(tx)
+
+	startTime := time.Now()
+	lastLogTime := startTime
+
+	for {
+		sci, err := reader.NextItem()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			tx.Rollback(ctx)
+			return fmt.Errorf("failed to read item at row %d: %w", reader.RowNum(), err)
+		}
+
+		if err := insertStandardChargeInfo(ctx, queries, hospitalID, sci); err != nil {
+			tx.Rollback(ctx)
+			return fmt.Errorf("failed to insert item at row %d: %w", reader.RowNum(), err)
+		}
+
+		count++
+		batchCount++
+
+		// Commit batch and start new transaction
+		if batchCount >= batchSize {
+			if err := tx.Commit(ctx); err != nil {
+				return fmt.Errorf("failed to commit batch at row %d: %w", reader.RowNum(), err)
+			}
+
+			// Log progress periodically
+			now := time.Now()
+			if now.Sub(lastLogTime) >= 5*time.Second {
+				elapsed := now.Sub(startTime)
+				rate := float64(count) / elapsed.Seconds()
+				log.Printf("  Progress: %d items processed (%.1f items/sec), row %d",
+					count, rate, reader.RowNum())
+				lastLogTime = now
+			}
+
+			tx, err = pool.Begin(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to begin new transaction: %w", err)
+			}
+			queries = db.New(tx)
+			batchCount = 0
+		}
+	}
+
+	// Commit final batch
+	if batchCount > 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("failed to commit final batch: %w", err)
+		}
+	} else {
+		tx.Rollback(ctx) // Nothing to commit
+	}
+
+	elapsed := time.Since(startTime)
+	rate := float64(count) / elapsed.Seconds()
+	log.Printf("CSV import complete: %d items in %v (%.1f items/sec)", count, elapsed, rate)
+	return nil
+}
+
+// insertCSVHospitalHeader inserts hospital data from CSV header
+func insertCSVHospitalHeader(ctx context.Context, pool *pgxpool.Pool, header *CSVHeader) (int32, error) {
+	queries := db.New(pool)
+
+	// Parse date
+	date, err := time.Parse("2006-01-02", header.LastUpdatedOn)
+	if err != nil {
+		// Try alternate formats
+		date, err = time.Parse("01/02/2006", header.LastUpdatedOn)
+		if err != nil {
+			date = time.Now() // Fallback to current date
+		}
+	}
+
+	// Get first license info
+	var licenseNum, licenseState string
+	for state, num := range header.LicenseNumbers {
+		licenseState = state
+		licenseNum = num
+		break
+	}
+
+	params := db.InsertHospitalParams{
+		Name:          header.HospitalName,
+		Addresses:     header.HospitalAddresses,
+		LocationNames: header.HospitalLocations,
+		Npis:          nil,
+		LicenseNumber: toTextFromString(licenseNum),
+		LicenseState:  toTextFromString(licenseState),
+		Version:       header.Version,
+		LastUpdatedOn: pgtype.Date{Time: date, Valid: true},
+		AttesterName:  pgtype.Text{Valid: false},
+	}
+
+	return queries.InsertHospital(ctx, params)
 }
 
 // streamProcessJSON processes a large JSON file using streaming to minimize memory usage
