@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const results = await query<CodeResult>(
-      `SELECT DISTINCT
+      `SELECT
         c.code,
         c.code_type,
         sci.description,

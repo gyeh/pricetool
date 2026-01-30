@@ -20,6 +20,10 @@ interface HospitalPrice {
   plan_name: string | null
   negotiated_dollar: number | null
   methodology: string | null
+  lowest_estimate: number | null
+  lowest_estimate_plan: string | null
+  highest_estimate: number | null
+  highest_estimate_plan: string | null
 }
 
 export async function GET(
@@ -73,7 +77,8 @@ export async function GET(
         pc.payer_name,
         pc.plan_name,
         pc.standard_charge_dollar as negotiated_dollar,
-        pc.methodology
+        pc.methodology,
+        pc.estimated_amount
       FROM codes c
       JOIN item_codes ic ON ic.code_id = c.id
       JOIN standard_charge_items sci ON sci.id = ic.item_id
@@ -89,28 +94,68 @@ export async function GET(
     `
 
     const priceParams = codeType ? [code, codeType] : [code]
-    const prices = await query<HospitalPrice>(priceQuery, priceParams)
+    interface RawPrice extends Omit<HospitalPrice, 'lowest_estimate' | 'lowest_estimate_plan' | 'highest_estimate' | 'highest_estimate_plan'> {
+      estimated_amount: number | null
+    }
+    const prices = await query<RawPrice>(priceQuery, priceParams)
 
-    // Group by hospital, taking best discounted cash price
-    const hospitalMap = new Map<number, HospitalPrice>()
+    // Group by hospital, taking best discounted cash price and tracking estimate ranges
+    interface HospitalData {
+      price: RawPrice
+      lowestEstimate: { amount: number; plan: string } | null
+      highestEstimate: { amount: number; plan: string } | null
+    }
+    const hospitalMap = new Map<number, HospitalData>()
+
     for (const price of prices) {
       const existing = hospitalMap.get(price.hospital_id)
+
       if (!existing) {
-        hospitalMap.set(price.hospital_id, price)
-      } else if (
-        price.discounted_cash !== null &&
-        (existing.discounted_cash === null ||
-          price.discounted_cash < existing.discounted_cash)
-      ) {
-        hospitalMap.set(price.hospital_id, price)
+        const estimate = price.estimated_amount !== null ? Number(price.estimated_amount) : null
+        const estimateInfo = estimate !== null && price.plan_name
+          ? { amount: estimate, plan: price.plan_name }
+          : null
+        hospitalMap.set(price.hospital_id, {
+          price,
+          lowestEstimate: estimateInfo,
+          highestEstimate: estimateInfo,
+        })
+      } else {
+        // Update best discounted cash price
+        if (
+          price.discounted_cash !== null &&
+          (existing.price.discounted_cash === null ||
+            price.discounted_cash < existing.price.discounted_cash)
+        ) {
+          existing.price = price
+        }
+
+        // Track lowest and highest estimated amounts
+        const estimate = price.estimated_amount !== null ? Number(price.estimated_amount) : null
+        if (estimate !== null && price.plan_name) {
+          if (existing.lowestEstimate === null || estimate < existing.lowestEstimate.amount) {
+            existing.lowestEstimate = { amount: estimate, plan: price.plan_name }
+          }
+          if (existing.highestEstimate === null || estimate > existing.highestEstimate.amount) {
+            existing.highestEstimate = { amount: estimate, plan: price.plan_name }
+          }
+        }
       }
     }
 
-    const hospitalPrices = Array.from(hospitalMap.values()).sort((a, b) => {
-      const priceA = a.discounted_cash ?? a.gross_charge ?? Infinity
-      const priceB = b.discounted_cash ?? b.gross_charge ?? Infinity
-      return priceA - priceB
-    })
+    const hospitalPrices: HospitalPrice[] = Array.from(hospitalMap.values())
+      .map(({ price, lowestEstimate, highestEstimate }) => ({
+        ...price,
+        lowest_estimate: lowestEstimate?.amount ?? null,
+        lowest_estimate_plan: lowestEstimate?.plan ?? null,
+        highest_estimate: highestEstimate?.amount ?? null,
+        highest_estimate_plan: highestEstimate?.plan ?? null,
+      }))
+      .sort((a, b) => {
+        const priceA = a.discounted_cash ?? a.gross_charge ?? Infinity
+        const priceB = b.discounted_cash ?? b.gross_charge ?? Infinity
+        return priceA - priceB
+      })
 
     return NextResponse.json({
       service,
