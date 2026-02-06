@@ -23,13 +23,19 @@ CREATE TABLE IF NOT EXISTS codes (
 CREATE INDEX IF NOT EXISTS idx_codes_code ON codes(code);
 CREATE INDEX IF NOT EXISTS idx_codes_type ON codes(code_type);
 
+-- Plans table (normalized plan names)
+CREATE TABLE IF NOT EXISTS plans (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE
+);
+
 -- Standard charge items (the services/procedures)
 CREATE TABLE IF NOT EXISTS standard_charge_items (
     id SERIAL PRIMARY KEY,
     hospital_id INTEGER NOT NULL REFERENCES hospitals(id) ON DELETE CASCADE,
     description TEXT NOT NULL,
     drug_unit NUMERIC,
-    drug_unit_type VARCHAR(10),
+    drug_unit_type VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_items_hospital ON standard_charge_items(hospital_id);
@@ -64,7 +70,7 @@ CREATE TABLE IF NOT EXISTS payer_charges (
     id SERIAL PRIMARY KEY,
     standard_charge_id INTEGER NOT NULL REFERENCES standard_charges(id) ON DELETE CASCADE,
     payer_name VARCHAR(255) NOT NULL,
-    plan_name VARCHAR(255) NOT NULL,
+    plan_id INTEGER NOT NULL REFERENCES plans(id),
     methodology VARCHAR(50) NOT NULL,
     standard_charge_dollar NUMERIC,
     standard_charge_percentage NUMERIC,
@@ -78,6 +84,7 @@ CREATE TABLE IF NOT EXISTS payer_charges (
 );
 CREATE INDEX IF NOT EXISTS idx_payer_charges_charge ON payer_charges(standard_charge_id);
 CREATE INDEX IF NOT EXISTS idx_payer_charges_payer ON payer_charges(payer_name);
+CREATE INDEX IF NOT EXISTS idx_payer_charges_plan ON payer_charges(plan_id);
 
 -- Modifiers
 CREATE TABLE IF NOT EXISTS modifiers (
@@ -95,7 +102,7 @@ CREATE TABLE IF NOT EXISTS modifier_payer_info (
     id SERIAL PRIMARY KEY,
     modifier_id INTEGER NOT NULL REFERENCES modifiers(id) ON DELETE CASCADE,
     payer_name VARCHAR(255) NOT NULL,
-    plan_name VARCHAR(255) NOT NULL,
+    plan_id INTEGER NOT NULL REFERENCES plans(id),
     description TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_modifier_payer_modifier ON modifier_payer_info(modifier_id);
