@@ -1,24 +1,13 @@
 "use client"
 
 import { useEffect, useState, useRef } from "react"
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet"
-import L from "leaflet"
+import mapboxgl from "mapbox-gl"
 import { X, MapPin } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
-// Fix for default marker icons in Leaflet with Next.js
-const defaultIcon = L.icon({
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
-})
-
-L.Marker.prototype.options.icon = defaultIcon
+const MAPBOX_TOKEN =
+  "pk.eyJ1Ijoia2RqZmthZHNqZjg4OGEiLCJhIjoiY21sYnN3ZTVnMHN1eDNocTRneXB5cHNtciJ9.tWRIMX9jTaDM-MgKVIlldw"
 
 interface Hospital {
   hospital_id: number
@@ -36,20 +25,7 @@ interface GeocodedHospital extends Hospital {
 interface HospitalMapProps {
   hospitals: Hospital[]
   onClose: () => void
-}
-
-// Component to fit map bounds to markers
-function FitBounds({ positions }: { positions: [number, number][] }) {
-  const map = useMap()
-
-  useEffect(() => {
-    if (positions.length > 0) {
-      const bounds = L.latLngBounds(positions.map(([lat, lng]) => [lat, lng]))
-      map.fitBounds(bounds, { padding: [50, 50] })
-    }
-  }, [map, positions])
-
-  return null
+  onHospitalClick?: (hospitalId: number) => void
 }
 
 // Cache for geocoded addresses
@@ -99,15 +75,49 @@ function formatPrice(price: number | null): string {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 0,
   }).format(price)
 }
 
-export default function HospitalMap({ hospitals, onClose }: HospitalMapProps) {
+function createPriceMarkerElement(hospital: Hospital): HTMLDivElement {
+  const el = document.createElement("div")
+  el.style.cursor = "pointer"
+
+  const price = hospital.discounted_cash ?? hospital.gross_charge
+  const isCash = hospital.discounted_cash !== null
+  const label = price !== null ? formatPrice(price) : "N/A"
+  const bg = price === null ? "#9ca3af" : isCash ? "#16a34a" : "#6b7280"
+
+  el.innerHTML = `
+    <div style="
+      background: ${bg};
+      color: white;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      border: 2px solid white;
+      line-height: 1.4;
+    ">${label}</div>
+  `
+  return el
+}
+
+export default function HospitalMap({
+  hospitals,
+  onClose,
+  onHospitalClick,
+}: HospitalMapProps) {
+  const mapContainerRef = useRef<HTMLDivElement>(null)
+  const mapRef = useRef<mapboxgl.Map | null>(null)
+  const markersRef = useRef<mapboxgl.Marker[]>([])
   const [geocodedHospitals, setGeocodedHospitals] = useState<GeocodedHospital[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Geocode hospitals
   useEffect(() => {
     let cancelled = false
 
@@ -117,7 +127,6 @@ export default function HospitalMap({ hospitals, onClose }: HospitalMapProps) {
 
       const results: GeocodedHospital[] = []
 
-      // Geocode addresses sequentially to respect Nominatim rate limits
       for (const hospital of hospitals) {
         if (cancelled) break
         if (!hospital.hospital_address) continue
@@ -152,17 +161,95 @@ export default function HospitalMap({ hospitals, onClose }: HospitalMapProps) {
     }
   }, [hospitals])
 
-  const positions: [number, number][] = geocodedHospitals.map((h) => [h.lat, h.lng])
+  // Initialize map
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return
 
-  // Default center (NYC area) if no hospitals yet
-  const defaultCenter: [number, number] = [40.7128, -74.006]
-  const center =
-    positions.length > 0
-      ? ([
-          positions.reduce((sum, p) => sum + p[0], 0) / positions.length,
-          positions.reduce((sum, p) => sum + p[1], 0) / positions.length,
-        ] as [number, number])
-      : defaultCenter
+    mapboxgl.accessToken = MAPBOX_TOKEN
+
+    const map = new mapboxgl.Map({
+      container: mapContainerRef.current,
+      style: "mapbox://styles/mapbox/light-v11",
+      center: [-74.006, 40.7128], // NYC default
+      zoom: 10,
+    })
+
+    map.addControl(new mapboxgl.NavigationControl(), "top-right")
+    mapRef.current = map
+
+    return () => {
+      map.remove()
+      mapRef.current = null
+    }
+  }, [])
+
+  // Stable callback ref for onHospitalClick
+  const onHospitalClickRef = useRef(onHospitalClick)
+  useEffect(() => {
+    onHospitalClickRef.current = onHospitalClick
+  }, [onHospitalClick])
+
+  // Place markers when geocoded hospitals change
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    // Remove old markers
+    markersRef.current.forEach((m) => m.remove())
+    markersRef.current = []
+
+    if (geocodedHospitals.length === 0) return
+
+    const bounds = new mapboxgl.LngLatBounds()
+
+    for (const hospital of geocodedHospitals) {
+      const el = createPriceMarkerElement(hospital)
+
+      const price = hospital.discounted_cash ?? hospital.gross_charge
+      const isCash = hospital.discounted_cash !== null
+      const priceLabel =
+        price !== null ? formatPrice(price) : "Price not available"
+      const priceType = price !== null ? (isCash ? "Cash Price" : "Gross Charge") : ""
+
+      const popupHTML = `
+        <div style="min-width:180px;font-family:system-ui,sans-serif;">
+          <div style="font-weight:600;font-size:13px;margin-bottom:4px;">${hospital.hospital_name}</div>
+          <div style="font-size:12px;color:#666;margin-bottom:8px;">${hospital.hospital_address}</div>
+          <div style="border-top:1px solid #e5e7eb;padding-top:8px;">
+            ${price !== null
+              ? `<div style="font-size:12px;color:#666;">${priceType}</div>
+                 <div style="font-size:16px;font-weight:700;color:${isCash ? "#16a34a" : "#374151"};">${priceLabel}</div>`
+              : `<div style="font-size:13px;color:#9ca3af;">Price not available</div>`
+            }
+          </div>
+        </div>
+      `
+
+      const popup = new mapboxgl.Popup({ offset: 15, maxWidth: "260px" }).setHTML(
+        popupHTML
+      )
+
+      const marker = new mapboxgl.Marker({ element: el })
+        .setLngLat([hospital.lng, hospital.lat])
+        .setPopup(popup)
+        .addTo(map)
+
+      el.addEventListener("click", () => {
+        onHospitalClickRef.current?.(hospital.hospital_id)
+      })
+
+      bounds.extend([hospital.lng, hospital.lat])
+      markersRef.current.push(marker)
+    }
+
+    // Fit bounds once map is loaded
+    const fit = () => map.fitBounds(bounds, { padding: 50, maxZoom: 14 })
+    if (map.loaded()) {
+      fit()
+    } else {
+      map.once("load", fit)
+    }
+  }, [geocodedHospitals])
 
   return (
     <Card className="h-full flex flex-col border-border/50 shadow-lg">
@@ -193,53 +280,11 @@ export default function HospitalMap({ hospitals, onClose }: HospitalMapProps) {
           </div>
         )}
 
-        <MapContainer
-          center={center}
-          zoom={10}
+        <div
+          ref={mapContainerRef}
           className="h-full w-full rounded-b-lg"
           style={{ minHeight: "400px" }}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-
-          {geocodedHospitals.map((hospital) => (
-            <Marker key={hospital.hospital_id} position={[hospital.lat, hospital.lng]}>
-              <Popup>
-                <div className="min-w-[200px]">
-                  <h3 className="font-semibold text-sm mb-1">
-                    {hospital.hospital_name}
-                  </h3>
-                  <p className="text-xs text-gray-600 mb-2">
-                    {hospital.hospital_address}
-                  </p>
-                  <div className="border-t pt-2">
-                    {hospital.discounted_cash !== null ? (
-                      <p className="text-sm">
-                        <span className="text-gray-600">Cash Price: </span>
-                        <span className="font-semibold text-green-600">
-                          {formatPrice(hospital.discounted_cash)}
-                        </span>
-                      </p>
-                    ) : hospital.gross_charge !== null ? (
-                      <p className="text-sm">
-                        <span className="text-gray-600">Gross Charge: </span>
-                        <span className="font-semibold">
-                          {formatPrice(hospital.gross_charge)}
-                        </span>
-                      </p>
-                    ) : (
-                      <p className="text-sm text-gray-500">Price not available</p>
-                    )}
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-
-          {positions.length > 0 && <FitBounds positions={positions} />}
-        </MapContainer>
+        />
       </CardContent>
     </Card>
   )

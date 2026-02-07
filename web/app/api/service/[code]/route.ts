@@ -20,10 +20,8 @@ interface HospitalPrice {
   plan_name: string | null
   negotiated_dollar: number | null
   methodology: string | null
-  lowest_estimate: number | null
-  lowest_estimate_plan: string | null
-  highest_estimate: number | null
-  highest_estimate_plan: string | null
+  median_estimate: number | null
+  plan_count: number
 }
 
 export async function GET(
@@ -95,31 +93,26 @@ export async function GET(
     `
 
     const priceParams = codeType ? [code, codeType] : [code]
-    interface RawPrice extends Omit<HospitalPrice, 'lowest_estimate' | 'lowest_estimate_plan' | 'highest_estimate' | 'highest_estimate_plan'> {
+    interface RawPrice extends Omit<HospitalPrice, 'median_estimate' | 'plan_count'> {
       estimated_amount: number | null
     }
     const prices = await query<RawPrice>(priceQuery, priceParams)
 
-    // Group by hospital, taking best discounted cash price and tracking estimate ranges
+    // Group by hospital, taking best discounted cash price and collecting all estimates
     interface HospitalData {
       price: RawPrice
-      lowestEstimate: { amount: number; plan: string } | null
-      highestEstimate: { amount: number; plan: string } | null
+      estimates: number[]
     }
     const hospitalMap = new Map<number, HospitalData>()
 
     for (const price of prices) {
       const existing = hospitalMap.get(price.hospital_id)
+      const estimate = price.estimated_amount !== null ? Number(price.estimated_amount) : null
 
       if (!existing) {
-        const estimate = price.estimated_amount !== null ? Number(price.estimated_amount) : null
-        const estimateInfo = estimate !== null && price.plan_name
-          ? { amount: estimate, plan: price.plan_name }
-          : null
         hospitalMap.set(price.hospital_id, {
           price,
-          lowestEstimate: estimateInfo,
-          highestEstimate: estimateInfo,
+          estimates: estimate !== null ? [estimate] : [],
         })
       } else {
         // Update best discounted cash price
@@ -131,26 +124,28 @@ export async function GET(
           existing.price = price
         }
 
-        // Track lowest and highest estimated amounts
-        const estimate = price.estimated_amount !== null ? Number(price.estimated_amount) : null
-        if (estimate !== null && price.plan_name) {
-          if (existing.lowestEstimate === null || estimate < existing.lowestEstimate.amount) {
-            existing.lowestEstimate = { amount: estimate, plan: price.plan_name }
-          }
-          if (existing.highestEstimate === null || estimate > existing.highestEstimate.amount) {
-            existing.highestEstimate = { amount: estimate, plan: price.plan_name }
-          }
+        // Collect all estimated amounts
+        if (estimate !== null) {
+          existing.estimates.push(estimate)
         }
       }
     }
 
+    // Helper to calculate median
+    function calculateMedian(values: number[]): number | null {
+      if (values.length === 0) return null
+      const sorted = [...values].sort((a, b) => a - b)
+      const mid = Math.floor(sorted.length / 2)
+      return sorted.length % 2 !== 0
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2
+    }
+
     const hospitalPrices: HospitalPrice[] = Array.from(hospitalMap.values())
-      .map(({ price, lowestEstimate, highestEstimate }) => ({
+      .map(({ price, estimates }) => ({
         ...price,
-        lowest_estimate: lowestEstimate?.amount ?? null,
-        lowest_estimate_plan: lowestEstimate?.plan ?? null,
-        highest_estimate: highestEstimate?.amount ?? null,
-        highest_estimate_plan: highestEstimate?.plan ?? null,
+        median_estimate: calculateMedian(estimates),
+        plan_count: estimates.length,
       }))
       .sort((a, b) => {
         const priceA = a.discounted_cash ?? a.gross_charge ?? Infinity

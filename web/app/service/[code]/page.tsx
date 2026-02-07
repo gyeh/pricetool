@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Map,
   Search,
+  ArrowUpDown,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -49,10 +50,8 @@ interface HospitalPrice {
   plan_name: string | null
   negotiated_dollar: number | null
   methodology: string | null
-  lowest_estimate: number | null
-  lowest_estimate_plan: string | null
-  highest_estimate: number | null
-  highest_estimate_plan: string | null
+  median_estimate: number | null
+  plan_count: number
 }
 
 interface ServiceData {
@@ -83,6 +82,8 @@ export default function ServicePage({
   const [procedureResults, setProcedureResults] = useState<SearchResult[]>([])
   const [isSearchingProcedure, setIsSearchingProcedure] = useState(false)
   const [showProcedureResults, setShowProcedureResults] = useState(false)
+  const [highlightedHospitalId, setHighlightedHospitalId] = useState<number | null>(null)
+  const [sortBy, setSortBy] = useState<"cash" | "gross" | "median">("cash")
 
   interface SearchResult {
     code: string
@@ -153,6 +154,15 @@ export default function ServicePage({
     if (e.key === "Enter") handleHeaderLookup()
   }
 
+  const handleHospitalClick = (hospitalId: number) => {
+    const el = document.querySelector(`[data-hospital-id="${hospitalId}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" })
+    }
+    setHighlightedHospitalId(hospitalId)
+    setTimeout(() => setHighlightedHospitalId(null), 2000)
+  }
+
   const formatPrice = (price: number | null) => {
     if (price === null) return "N/A"
     return new Intl.NumberFormat("en-US", {
@@ -177,6 +187,38 @@ export default function ServicePage({
       .map((p) => p.discounted_cash ?? p.gross_charge)
       .filter((p): p is number => p !== null)
     return prices.length > 0 ? Math.max(...prices) : null
+  }
+
+  const getSortedPrices = () => {
+    if (!data?.prices?.length) return []
+    return [...data.prices].sort((a, b) => {
+      let valA: number | null
+      let valB: number | null
+
+      switch (sortBy) {
+        case "cash":
+          valA = a.discounted_cash
+          valB = b.discounted_cash
+          break
+        case "gross":
+          valA = a.gross_charge
+          valB = b.gross_charge
+          break
+        case "median":
+          valA = a.median_estimate
+          valB = b.median_estimate
+          break
+        default:
+          valA = a.discounted_cash
+          valB = b.discounted_cash
+      }
+
+      // Null values go to the end
+      if (valA === null && valB === null) return 0
+      if (valA === null) return 1
+      if (valB === null) return -1
+      return valA - valB
+    })
   }
 
   if (loading) {
@@ -433,15 +475,29 @@ export default function ServicePage({
                 <CardTitle className="text-lg font-semibold">
                   Hospital Pricing Comparison
                 </CardTitle>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowMap(!showMap)}
-                  className="hidden md:flex items-center gap-2"
-                >
-                  <Map className="w-4 h-4" />
-                  {showMap ? "Hide Map" : "Show Map"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <ArrowUpDown className="w-4 h-4 text-muted-foreground" />
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as "cash" | "gross" | "median")}
+                      className="py-1.5 px-2 text-sm rounded-md border border-border/60 bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
+                    >
+                      <option value="cash">Cash Price</option>
+                      <option value="gross">Gross Price</option>
+                      <option value="median">Insurance Estimate</option>
+                    </select>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowMap(!showMap)}
+                    className="hidden md:flex items-center gap-2"
+                  >
+                    <Map className="w-4 h-4" />
+                    {showMap ? "Hide Map" : "Show Map"}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 {data.prices.length === 0 ? (
@@ -450,7 +506,7 @@ export default function ServicePage({
                   </div>
                 ) : (
                   <div className="divide-y divide-border/50">
-                    {data.prices.map((price, index) => (
+                    {getSortedPrices().map((price, index) => (
                       <HospitalRow
                         key={`${price.hospital_id}-${index}`}
                         price={price}
@@ -459,6 +515,7 @@ export default function ServicePage({
                           (price.discounted_cash ?? price.gross_charge) ===
                             lowestPrice
                         }
+                        isHighlighted={highlightedHospitalId === price.hospital_id}
                         formatPrice={formatPrice}
                       />
                     ))}
@@ -483,6 +540,7 @@ export default function ServicePage({
                 <HospitalMap
                   hospitals={data.prices}
                   onClose={() => setShowMap(false)}
+                  onHospitalClick={handleHospitalClick}
                 />
               </div>
             </div>
@@ -496,18 +554,25 @@ export default function ServicePage({
 function HospitalRow({
   price,
   isLowest,
+  isHighlighted,
   formatPrice,
 }: {
   price: HospitalPrice
   isLowest: boolean
+  isHighlighted: boolean
   formatPrice: (price: number | null) => string
 }) {
   const displayPrice = price.discounted_cash ?? price.gross_charge
 
   return (
     <div
-      className={`p-5 hover:bg-accent/30 transition-colors ${
-        isLowest ? "bg-green-50/50" : ""
+      data-hospital-id={price.hospital_id}
+      className={`p-5 hover:bg-accent/30 transition-all duration-300 ${
+        isHighlighted
+          ? "ring-2 ring-primary bg-primary/10"
+          : isLowest
+            ? "bg-green-50/50"
+            : ""
       }`}
     >
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -539,35 +604,19 @@ function HospitalRow({
             </span>
           )}
 
-          {/* Estimated amount range by plan */}
-          {(price.lowest_estimate !== null || price.highest_estimate !== null) && (
+          {/* Median insurance estimate */}
+          {price.plan_count > 0 && price.median_estimate !== null && (
             <div className="mt-3 pt-3 border-t border-border/30">
               <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
-                Insurance Estimates
+                Insurance Estimate
               </p>
-              <div className="flex flex-wrap gap-4">
-                {price.lowest_estimate !== null && price.lowest_estimate_plan && (
-                  <div className="text-sm">
-                    <span className="text-green-600 font-semibold">
-                      {formatPrice(price.lowest_estimate)}
-                    </span>
-                    <span className="text-muted-foreground ml-1">
-                      ({price.lowest_estimate_plan})
-                    </span>
-                  </div>
-                )}
-                {price.highest_estimate !== null &&
-                 price.highest_estimate_plan &&
-                 price.highest_estimate !== price.lowest_estimate && (
-                  <div className="text-sm">
-                    <span className="text-amber-600 font-semibold">
-                      {formatPrice(price.highest_estimate)}
-                    </span>
-                    <span className="text-muted-foreground ml-1">
-                      ({price.highest_estimate_plan})
-                    </span>
-                  </div>
-                )}
+              <div className="text-sm">
+                <span className="text-blue-600 font-semibold">
+                  {formatPrice(price.median_estimate)}
+                </span>
+                <span className="text-muted-foreground ml-1">
+                  (median across {price.plan_count} plan{price.plan_count !== 1 ? "s" : ""})
+                </span>
               </div>
             </div>
           )}
