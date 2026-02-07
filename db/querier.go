@@ -21,6 +21,7 @@ type Querier interface {
 	ListCodesByType(ctx context.Context, codeType string) ([]Code, error)
 	ListStandardChargeItemsByCode(ctx context.Context, arg ListStandardChargeItemsByCodeParams) ([]StandardChargeItem, error)
 	UpsertCode(ctx context.Context, arg UpsertCodeParams) (int32, error)
+	UpsertPlan(ctx context.Context, name string) (int32, error)
 }
 
 var _ Querier = (*Queries)(nil)

@@ -12,6 +12,7 @@ import {
   TrendingDown,
   AlertCircle,
   Map,
+  Search,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -74,6 +75,22 @@ export default function ServicePage({
   const [error, setError] = useState<string | null>(null)
   const [showMap, setShowMap] = useState(true)
 
+  // Header search state
+  const [headerCodeType, setHeaderCodeType] = useState(codeType || "CPT")
+  const [headerCodeValue, setHeaderCodeValue] = useState(code)
+  const [showProcedureSearch, setShowProcedureSearch] = useState(false)
+  const [procedureQuery, setProcedureQuery] = useState("")
+  const [procedureResults, setProcedureResults] = useState<SearchResult[]>([])
+  const [isSearchingProcedure, setIsSearchingProcedure] = useState(false)
+  const [showProcedureResults, setShowProcedureResults] = useState(false)
+
+  interface SearchResult {
+    code: string
+    code_type: string
+    description: string
+    hospital_count: number
+  }
+
   useEffect(() => {
     async function fetchData() {
       try {
@@ -103,6 +120,38 @@ export default function ServicePage({
 
     fetchData()
   }, [code, codeType])
+
+  // Procedure search with debounce
+  useEffect(() => {
+    if (procedureQuery.length < 2) {
+      setProcedureResults([])
+      return
+    }
+    const timer = setTimeout(async () => {
+      setIsSearchingProcedure(true)
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(procedureQuery)}`)
+        const data = await res.json()
+        setProcedureResults(data.results || [])
+      } catch {
+        setProcedureResults([])
+      } finally {
+        setIsSearchingProcedure(false)
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [procedureQuery])
+
+  const handleHeaderLookup = () => {
+    const trimmed = headerCodeValue.trim()
+    if (trimmed) {
+      router.push(`/service/${encodeURIComponent(trimmed)}?type=${encodeURIComponent(headerCodeType)}`)
+    }
+  }
+
+  const handleHeaderKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") handleHeaderLookup()
+  }
 
   const formatPrice = (price: number | null) => {
     if (price === null) return "N/A"
@@ -191,18 +240,126 @@ export default function ServicePage({
       {/* Decorative background */}
       <div className="absolute top-0 left-0 right-0 h-80 bg-gradient-to-b from-warm-100/50 to-transparent -z-10" />
 
+      {/* Header bar */}
+      <div className="border-b border-border/50 bg-card/80 backdrop-blur-sm sticky top-0 z-30">
+        <div className="container mx-auto px-6 py-3">
+          <div className="flex items-center gap-3">
+            <Link
+              href="/"
+              className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              title="Back to home"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Link>
+
+            <select
+              value={headerCodeType}
+              onChange={(e) => setHeaderCodeType(e.target.value)}
+              className="shrink-0 w-28 py-2 px-3 text-sm rounded-lg border border-border/60 bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
+            >
+              {["CPT", "HCPCS", "MS-DRG", "NDC", "RC", "CDM", "ICD", "DRG", "LOCAL", "APC"].map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+
+            <input
+              type="text"
+              placeholder="Code value"
+              className="w-40 py-2 px-3 text-sm rounded-lg border border-border/60 bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
+              value={headerCodeValue}
+              onChange={(e) => setHeaderCodeValue(e.target.value)}
+              onKeyDown={handleHeaderKeyDown}
+            />
+
+            <button
+              onClick={handleHeaderLookup}
+              disabled={!headerCodeValue.trim()}
+              className="shrink-0 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Look up
+            </button>
+
+            <div className="h-6 w-px bg-border/60 mx-1" />
+
+            <div className="relative flex-1 min-w-0">
+              <button
+                onClick={() => {
+                  setShowProcedureSearch(!showProcedureSearch)
+                  setShowProcedureResults(false)
+                }}
+                className="flex items-center gap-2 py-2 px-3 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Search className="w-4 h-4" />
+                Search by procedure
+              </button>
+
+              {showProcedureSearch && (
+                <div className="absolute top-full left-0 right-0 mt-1 z-50">
+                  <input
+                    type="text"
+                    placeholder="Search by procedure name..."
+                    autoFocus
+                    className="w-full py-2 px-3 text-sm rounded-lg border border-border/60 bg-background shadow-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
+                    value={procedureQuery}
+                    onChange={(e) => {
+                      setProcedureQuery(e.target.value)
+                      setShowProcedureResults(true)
+                    }}
+                    onFocus={() => setShowProcedureResults(true)}
+                    onBlur={() => setTimeout(() => {
+                      setShowProcedureResults(false)
+                      if (!procedureQuery) setShowProcedureSearch(false)
+                    }, 200)}
+                  />
+
+                  {showProcedureResults && procedureResults.length > 0 && (
+                    <Card className="mt-1 overflow-hidden shadow-lg border-border/50">
+                      <CardContent className="p-0">
+                        <ul className="divide-y divide-border/50 max-h-80 overflow-y-auto">
+                          {procedureResults.map((result, index) => (
+                            <li
+                              key={`${result.code}-${result.code_type}-${index}`}
+                              className="px-4 py-3 hover:bg-accent/50 cursor-pointer transition-colors"
+                              onMouseDown={() => {
+                                router.push(`/service/${result.code}?type=${result.code_type}`)
+                                setShowProcedureSearch(false)
+                                setProcedureQuery("")
+                              }}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-sm">{result.code}</span>
+                                <span className="px-1.5 py-0.5 text-xs font-medium rounded-full bg-warm-100 text-warm-700">
+                                  {result.code_type}
+                                </span>
+                                <span className="text-sm text-muted-foreground truncate">
+                                  {result.description}
+                                </span>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {showProcedureResults && procedureQuery.length >= 2 && procedureResults.length === 0 && !isSearchingProcedure && (
+                    <Card className="mt-1 shadow-lg border-border/50">
+                      <CardContent className="p-4 text-center text-sm text-muted-foreground">
+                        No results found
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="container mx-auto px-6 py-8">
         <div className="flex gap-6">
           {/* Main content */}
           <div className={showMap ? "flex-1 min-w-0" : "w-full"}>
-            {/* Back button */}
-            <Link
-              href="/"
-              className="inline-flex items-center text-muted-foreground hover:text-foreground transition-colors mb-8"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Search
-            </Link>
 
             {/* Service Header */}
             <div className="mb-10">

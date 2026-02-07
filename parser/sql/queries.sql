@@ -12,6 +12,12 @@ VALUES ($1, $2)
 ON CONFLICT (code, code_type) DO UPDATE SET code = EXCLUDED.code
 RETURNING id;
 
+-- name: UpsertPlan :one
+INSERT INTO plans (name)
+VALUES ($1)
+ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+RETURNING id;
+
 -- name: InsertStandardChargeItem :one
 INSERT INTO standard_charge_items (hospital_id, description, drug_unit, drug_unit_type)
 VALUES ($1, $2, $3, $4)
@@ -31,7 +37,7 @@ RETURNING id;
 
 -- name: InsertPayerCharge :exec
 INSERT INTO payer_charges (
-    standard_charge_id, payer_name, plan_name, methodology,
+    standard_charge_id, payer_name, plan_id, methodology,
     standard_charge_dollar, standard_charge_percentage,
     standard_charge_algorithm, estimated_amount, median_amount,
     percentile_10th, percentile_90th, count, additional_notes
@@ -43,7 +49,7 @@ VALUES ($1, $2, $3, $4)
 RETURNING id;
 
 -- name: InsertModifierPayerInfo :exec
-INSERT INTO modifier_payer_info (modifier_id, payer_name, plan_name, description)
+INSERT INTO modifier_payer_info (modifier_id, payer_name, plan_id, description)
 VALUES ($1, $2, $3, $4);
 
 -- name: GetCodeByCodeAndType :one

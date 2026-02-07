@@ -79,6 +79,7 @@ func (tdb *testDB) cleanup(t *testing.T) {
 		"item_codes",
 		"standard_charge_items",
 		"codes",
+		"plans",
 		"hospitals",
 	}
 
@@ -394,11 +395,17 @@ func TestInsertPayerCharge(t *testing.T) {
 		Setting: "inpatient",
 	})
 
+	// Upsert plan
+	planID, err := queries.UpsertPlan(ctx, "PPO")
+	if err != nil {
+		t.Fatalf("Failed to upsert plan: %v", err)
+	}
+
 	// Insert payer charge with dollar amount
-	err := queries.InsertPayerCharge(ctx, db.InsertPayerChargeParams{
+	err = queries.InsertPayerCharge(ctx, db.InsertPayerChargeParams{
 		StandardChargeID:         chargeID,
 		PayerName:                "Test Insurance",
-		PlanName:                 "PPO",
+		PlanID:                   planID,
 		Methodology:              "case rate",
 		StandardChargeDollar:     toNumeric(ptrFloat(25000)),
 		StandardChargePercentage: pgtype.Numeric{Valid: false},
@@ -435,11 +442,17 @@ func TestInsertPayerChargeWithPercentage(t *testing.T) {
 		Setting: "inpatient",
 	})
 
+	// Upsert plan
+	planID, err := queries.UpsertPlan(ctx, "HMO")
+	if err != nil {
+		t.Fatalf("Failed to upsert plan: %v", err)
+	}
+
 	// Insert payer charge with percentage
-	err := queries.InsertPayerCharge(ctx, db.InsertPayerChargeParams{
+	err = queries.InsertPayerCharge(ctx, db.InsertPayerChargeParams{
 		StandardChargeID:         chargeID,
 		PayerName:                "Test Insurance",
-		PlanName:                 "HMO",
+		PlanID:                   planID,
 		Methodology:              "percent of total billed charges",
 		StandardChargeDollar:     pgtype.Numeric{Valid: false},
 		StandardChargePercentage: toNumeric(ptrFloat(50)),
@@ -496,11 +509,17 @@ func TestInsertModifierPayerInfo(t *testing.T) {
 		Setting:     pgtype.Text{String: "both", Valid: true},
 	})
 
+	// Upsert plan
+	planID, err := queries.UpsertPlan(ctx, "PPO")
+	if err != nil {
+		t.Fatalf("Failed to upsert plan: %v", err)
+	}
+
 	// Insert modifier payer info
-	err := queries.InsertModifierPayerInfo(ctx, db.InsertModifierPayerInfoParams{
+	err = queries.InsertModifierPayerInfo(ctx, db.InsertModifierPayerInfoParams{
 		ModifierID:  modifierID,
 		PayerName:   "Test Insurance",
-		PlanName:    "PPO",
+		PlanID:      planID,
 		Description: "150% payment adjustment",
 	})
 	if err != nil {
@@ -626,11 +645,16 @@ func TestFullImportFlow(t *testing.T) {
 		t.Fatalf("Failed to insert charge: %v", err)
 	}
 
-	// 5. Insert payer charges
+	// 5. Insert plan and payer charges
+	planID, err := queries.UpsertPlan(ctx, "PPO")
+	if err != nil {
+		t.Fatalf("Failed to upsert plan: %v", err)
+	}
+
 	err = queries.InsertPayerCharge(ctx, db.InsertPayerChargeParams{
 		StandardChargeID:         chargeID,
 		PayerName:                "Platform Health Insurance",
-		PlanName:                 "PPO",
+		PlanID:                   planID,
 		Methodology:              "percent of total billed charges",
 		StandardChargePercentage: toNumeric(ptrFloat(50)),
 		MedianAmount:             toNumeric(ptrFloat(21345.12)),
@@ -653,11 +677,11 @@ func TestFullImportFlow(t *testing.T) {
 		t.Fatalf("Failed to insert modifier: %v", err)
 	}
 
-	// 7. Insert modifier payer info
+	// 7. Insert modifier payer info (reuse planID from step 5)
 	err = queries.InsertModifierPayerInfo(ctx, db.InsertModifierPayerInfoParams{
 		ModifierID:  modifierID,
 		PayerName:   "Platform Health Insurance",
-		PlanName:    "PPO",
+		PlanID:      planID,
 		Description: "150% payment adjustment",
 	})
 	if err != nil {

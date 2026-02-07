@@ -131,14 +131,14 @@ func (q *Queries) InsertModifier(ctx context.Context, arg InsertModifierParams) 
 }
 
 const insertModifierPayerInfo = `-- name: InsertModifierPayerInfo :exec
-INSERT INTO modifier_payer_info (modifier_id, payer_name, plan_name, description)
+INSERT INTO modifier_payer_info (modifier_id, payer_name, plan_id, description)
 VALUES ($1, $2, $3, $4)
 `
 
 type InsertModifierPayerInfoParams struct {
 	ModifierID  int32  `json:"modifier_id"`
 	PayerName   string `json:"payer_name"`
-	PlanName    string `json:"plan_name"`
+	PlanID      int32  `json:"plan_id"`
 	Description string `json:"description"`
 }
 
@@ -146,7 +146,7 @@ func (q *Queries) InsertModifierPayerInfo(ctx context.Context, arg InsertModifie
 	_, err := q.db.Exec(ctx, insertModifierPayerInfo,
 		arg.ModifierID,
 		arg.PayerName,
-		arg.PlanName,
+		arg.PlanID,
 		arg.Description,
 	)
 	return err
@@ -154,7 +154,7 @@ func (q *Queries) InsertModifierPayerInfo(ctx context.Context, arg InsertModifie
 
 const insertPayerCharge = `-- name: InsertPayerCharge :exec
 INSERT INTO payer_charges (
-    standard_charge_id, payer_name, plan_name, methodology,
+    standard_charge_id, payer_name, plan_id, methodology,
     standard_charge_dollar, standard_charge_percentage,
     standard_charge_algorithm, estimated_amount, median_amount,
     percentile_10th, percentile_90th, count, additional_notes
@@ -164,7 +164,7 @@ INSERT INTO payer_charges (
 type InsertPayerChargeParams struct {
 	StandardChargeID         int32          `json:"standard_charge_id"`
 	PayerName                string         `json:"payer_name"`
-	PlanName                 string         `json:"plan_name"`
+	PlanID                   int32          `json:"plan_id"`
 	Methodology              string         `json:"methodology"`
 	StandardChargeDollar     pgtype.Numeric `json:"standard_charge_dollar"`
 	StandardChargePercentage pgtype.Numeric `json:"standard_charge_percentage"`
@@ -181,7 +181,7 @@ func (q *Queries) InsertPayerCharge(ctx context.Context, arg InsertPayerChargePa
 	_, err := q.db.Exec(ctx, insertPayerCharge,
 		arg.StandardChargeID,
 		arg.PayerName,
-		arg.PlanName,
+		arg.PlanID,
 		arg.Methodology,
 		arg.StandardChargeDollar,
 		arg.StandardChargePercentage,
@@ -335,6 +335,20 @@ type UpsertCodeParams struct {
 
 func (q *Queries) UpsertCode(ctx context.Context, arg UpsertCodeParams) (int32, error) {
 	row := q.db.QueryRow(ctx, upsertCode, arg.Code, arg.CodeType)
+	var id int32
+	err := row.Scan(&id)
+	return id, err
+}
+
+const upsertPlan = `-- name: UpsertPlan :one
+INSERT INTO plans (name)
+VALUES ($1)
+ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+RETURNING id
+`
+
+func (q *Queries) UpsertPlan(ctx context.Context, name string) (int32, error) {
+	row := q.db.QueryRow(ctx, upsertPlan, name)
 	var id int32
 	err := row.Scan(&id)
 	return id, err

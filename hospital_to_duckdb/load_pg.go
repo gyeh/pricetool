@@ -58,6 +58,8 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 
 	// Code cache: "CODE\tTYPE" → code_id
 	codeCache := make(map[string]int32)
+	// Plan cache: plan_name → plan_id
+	planCache := make(map[string]int32)
 
 	const readBatch = 8192
 	buf := make([]HospitalChargeRow, readBatch)
@@ -81,7 +83,7 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 	)
 
 	payerCopyCols := []string{
-		"standard_charge_id", "payer_name", "plan_name", "methodology",
+		"standard_charge_id", "payer_name", "plan_id", "methodology",
 		"standard_charge_dollar", "standard_charge_percentage",
 		"standard_charge_algorithm", "estimated_amount", "median_amount",
 		"percentile_10th", "percentile_90th", "count", "additional_notes",
@@ -221,10 +223,24 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 					methodology = sanitizeUTF8(*pr.Methodology)
 				}
 
+				planID, ok := planCache[planName]
+				if !ok {
+					err := tx.QueryRow(ctx,
+						`INSERT INTO plans (name) VALUES ($1)
+						 ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+						 RETURNING id`,
+						planName,
+					).Scan(&planID)
+					if err != nil {
+						return fmt.Errorf("upsert plan %q: %w", planName, err)
+					}
+					planCache[planName] = planID
+				}
+
 				pendingPayers = append(pendingPayers, []interface{}{
 					chargeID,
 					payerName,
-					planName,
+					planID,
 					methodology,
 					floatToNumeric(pr.NegotiatedDollar),
 					floatToNumeric(pr.NegotiatedPercentage),
@@ -339,6 +355,7 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 	fmt.Printf("  Charges:        %d\n", chargeCount)
 	fmt.Printf("  Payer charges:  %d\n", payerCount)
 	fmt.Printf("  Codes cached:   %d\n", len(codeCache))
+	fmt.Printf("  Plans cached:   %d\n", len(planCache))
 	fmt.Printf("  Throughput:     %.0f rows/s\n", float64(rowsRead)/elapsed.Seconds())
 
 	return nil

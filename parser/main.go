@@ -138,6 +138,8 @@ func streamProcessCSV(ctx context.Context, pool *pgxpool.Pool, filePath string, 
 	}
 	queries = db.New(tx)
 
+	planCache := make(map[string]int32)
+
 	startTime := time.Now()
 	lastLogTime := startTime
 
@@ -151,7 +153,7 @@ func streamProcessCSV(ctx context.Context, pool *pgxpool.Pool, filePath string, 
 			return fmt.Errorf("failed to read item at row %d: %w", reader.RowNum(), err)
 		}
 
-		if err := insertStandardChargeInfo(ctx, queries, hospitalID, sci); err != nil {
+		if err := insertStandardChargeInfo(ctx, queries, hospitalID, sci, planCache); err != nil {
 			tx.Rollback(ctx)
 			return fmt.Errorf("failed to insert item at row %d: %w", reader.RowNum(), err)
 		}
@@ -268,6 +270,7 @@ func streamProcessJSON(ctx context.Context, pool *pgxpool.Pool, filePath string,
 	header := &HospitalHeader{}
 	var hospitalID int32
 	var chargeCount, modifierCount int64
+	planCache := make(map[string]int32)
 
 	// Process fields one by one
 	for decoder.More() {
@@ -335,7 +338,7 @@ func streamProcessJSON(ctx context.Context, pool *pgxpool.Pool, filePath string,
 			}
 
 			// Stream through the array
-			chargeCount, err = streamStandardCharges(ctx, pool, decoder, hospitalID, batchSize)
+			chargeCount, err = streamStandardCharges(ctx, pool, decoder, hospitalID, batchSize, planCache)
 			if err != nil {
 				return fmt.Errorf("failed to stream standard charges: %w", err)
 			}
@@ -353,7 +356,7 @@ func streamProcessJSON(ctx context.Context, pool *pgxpool.Pool, filePath string,
 			}
 
 			// Stream through the array
-			modifierCount, err = streamModifiers(ctx, pool, decoder, hospitalID, batchSize)
+			modifierCount, err = streamModifiers(ctx, pool, decoder, hospitalID, batchSize, planCache)
 			if err != nil {
 				return fmt.Errorf("failed to stream modifiers: %w", err)
 			}
@@ -382,7 +385,7 @@ func streamProcessJSON(ctx context.Context, pool *pgxpool.Pool, filePath string,
 }
 
 // streamStandardCharges streams through the standard_charge_information array
-func streamStandardCharges(ctx context.Context, pool *pgxpool.Pool, decoder *json.Decoder, hospitalID int32, batchSize int) (int64, error) {
+func streamStandardCharges(ctx context.Context, pool *pgxpool.Pool, decoder *json.Decoder, hospitalID int32, batchSize int, planCache map[string]int32) (int64, error) {
 	// Read opening bracket
 	token, err := decoder.Token()
 	if err != nil {
@@ -412,7 +415,7 @@ func streamStandardCharges(ctx context.Context, pool *pgxpool.Pool, decoder *jso
 			return count, fmt.Errorf("failed to decode item %d: %w", count, err)
 		}
 
-		if err := insertStandardChargeInfo(ctx, queries, hospitalID, &sci); err != nil {
+		if err := insertStandardChargeInfo(ctx, queries, hospitalID, &sci, planCache); err != nil {
 			tx.Rollback(ctx)
 			return count, fmt.Errorf("failed to insert item %d: %w", count, err)
 		}
@@ -455,7 +458,7 @@ func streamStandardCharges(ctx context.Context, pool *pgxpool.Pool, decoder *jso
 }
 
 // streamModifiers streams through the modifier_information array
-func streamModifiers(ctx context.Context, pool *pgxpool.Pool, decoder *json.Decoder, hospitalID int32, batchSize int) (int64, error) {
+func streamModifiers(ctx context.Context, pool *pgxpool.Pool, decoder *json.Decoder, hospitalID int32, batchSize int, planCache map[string]int32) (int64, error) {
 	// Read opening bracket
 	token, err := decoder.Token()
 	if err != nil {
@@ -485,7 +488,7 @@ func streamModifiers(ctx context.Context, pool *pgxpool.Pool, decoder *json.Deco
 			return count, fmt.Errorf("failed to decode modifier %d: %w", count, err)
 		}
 
-		if err := insertModifier(ctx, queries, hospitalID, &mod); err != nil {
+		if err := insertModifier(ctx, queries, hospitalID, &mod, planCache); err != nil {
 			tx.Rollback(ctx)
 			return count, fmt.Errorf("failed to insert modifier %d: %w", count, err)
 		}
@@ -566,7 +569,7 @@ func insertHospitalHeader(ctx context.Context, pool *pgxpool.Pool, header *Hospi
 	return queries.InsertHospital(ctx, params)
 }
 
-func insertStandardChargeInfo(ctx context.Context, queries *db.Queries, hospitalID int32, sci *StandardChargeInformation) error {
+func insertStandardChargeInfo(ctx context.Context, queries *db.Queries, hospitalID int32, sci *StandardChargeInformation, planCache map[string]int32) error {
 	// Insert the item
 	var drugUnit pgtype.Numeric
 	var drugUnitType pgtype.Text
@@ -629,10 +632,19 @@ func insertStandardChargeInfo(ctx context.Context, queries *db.Queries, hospital
 
 		// Insert payer information
 		for _, pi := range sc.PayersInformation {
+			planID, ok := planCache[pi.PlanName]
+			if !ok {
+				planID, err = queries.UpsertPlan(ctx, pi.PlanName)
+				if err != nil {
+					return fmt.Errorf("failed to upsert plan: %w", err)
+				}
+				planCache[pi.PlanName] = planID
+			}
+
 			err := queries.InsertPayerCharge(ctx, db.InsertPayerChargeParams{
 				StandardChargeID:         chargeID,
 				PayerName:                pi.PayerName,
-				PlanName:                 pi.PlanName,
+				PlanID:                   planID,
 				Methodology:              pi.Methodology,
 				StandardChargeDollar:     toNumeric(pi.StandardChargeDollar),
 				StandardChargePercentage: toNumeric(pi.StandardChargePercentage),
@@ -653,7 +665,7 @@ func insertStandardChargeInfo(ctx context.Context, queries *db.Queries, hospital
 	return nil
 }
 
-func insertModifier(ctx context.Context, queries *db.Queries, hospitalID int32, mod *ModifierInformation) error {
+func insertModifier(ctx context.Context, queries *db.Queries, hospitalID int32, mod *ModifierInformation, planCache map[string]int32) error {
 	modifierID, err := queries.InsertModifier(ctx, db.InsertModifierParams{
 		HospitalID:  hospitalID,
 		Code:        mod.Code,
@@ -665,10 +677,19 @@ func insertModifier(ctx context.Context, queries *db.Queries, hospitalID int32, 
 	}
 
 	for _, mpi := range mod.ModifierPayerInformation {
-		err := queries.InsertModifierPayerInfo(ctx, db.InsertModifierPayerInfoParams{
+		planID, ok := planCache[mpi.PlanName]
+		if !ok {
+			planID, err = queries.UpsertPlan(ctx, mpi.PlanName)
+			if err != nil {
+				return fmt.Errorf("failed to upsert plan: %w", err)
+			}
+			planCache[mpi.PlanName] = planID
+		}
+
+		err = queries.InsertModifierPayerInfo(ctx, db.InsertModifierPayerInfoParams{
 			ModifierID:  modifierID,
 			PayerName:   mpi.PayerName,
-			PlanName:    mpi.PlanName,
+			PlanID:      planID,
 			Description: mpi.Description,
 		})
 		if err != nil {

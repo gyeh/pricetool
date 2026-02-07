@@ -18,6 +18,8 @@ export default function LandingPage() {
   const [results, setResults] = useState<SearchResult[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [showResults, setShowResults] = useState(false)
+  const [codeType, setCodeType] = useState("CPT")
+  const [codeValue, setCodeValue] = useState("")
 
   const search = useCallback(async (query: string) => {
     if (query.length < 2) {
@@ -56,6 +58,19 @@ export default function LandingPage() {
     router.push(`/service/${result.code}?type=${result.code_type}`)
   }
 
+  const handleCodeLookup = () => {
+    const trimmed = codeValue.trim()
+    if (trimmed) {
+      router.push(`/service/${encodeURIComponent(trimmed)}?type=${encodeURIComponent(codeType)}`)
+    }
+  }
+
+  const handleCodeKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleCodeLookup()
+    }
+  }
+
   return (
     <main className="min-h-screen">
       {/* Hero Section */}
@@ -81,13 +96,74 @@ export default function LandingPage() {
             </p>
           </div>
 
+          {/* Code Lookup */}
+          <div className="max-w-2xl mx-auto mb-8">
+            <label className="block text-sm font-medium text-muted-foreground mb-2">Look up by code</label>
+            <div className="flex gap-2">
+              <select
+                value={codeType}
+                onChange={(e) => setCodeType(e.target.value)}
+                className="shrink-0 w-28 py-3 px-3 text-base rounded-xl border-2 border-border/60 bg-background/80 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
+              >
+                {["CPT", "HCPCS", "MS-DRG", "NDC", "RC", "CDM", "ICD", "DRG", "LOCAL", "APC"].map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                placeholder="Enter code (e.g., 99213)"
+                className="search-input flex-1 px-4"
+                value={codeValue}
+                onChange={(e) => setCodeValue(e.target.value)}
+                onKeyDown={handleCodeKeyDown}
+              />
+              <button
+                onClick={handleCodeLookup}
+                disabled={!codeValue.trim()}
+                className="px-6 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Look up
+              </button>
+            </div>
+          </div>
+
+          {/* Popular codes */}
+          <div className="max-w-2xl mx-auto mt-4 mb-8">
+            <p className="text-sm text-muted-foreground mb-2">Popular codes:</p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { type: "CPT", code: "99213", desc: "Office visit, established patient" },
+                { type: "CPT", code: "27447", desc: "Total knee replacement" },
+                { type: "MS-DRG", code: "470", desc: "Major hip & knee joint replacement" },
+                { type: "HCPCS", code: "J1450", desc: "Fluconazole injection" },
+                { type: "CPT", code: "43239", desc: "Upper GI endoscopy with biopsy" },
+                { type: "CPT", code: "29881", desc: "Knee arthroscopy/surgery" },
+              ].map((item) => (
+                <button
+                  key={`${item.type}-${item.code}`}
+                  className="px-3 py-1.5 text-sm rounded-full bg-secondary hover:bg-secondary/80 text-secondary-foreground transition-colors"
+                  onClick={() => router.push(`/service/${encodeURIComponent(item.code)}?type=${encodeURIComponent(item.type)}`)}
+                >
+                  <span className="font-medium">{item.type} {item.code}</span>
+                  <span className="text-muted-foreground"> — {item.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="max-w-2xl mx-auto flex items-center gap-4 mb-8">
+            <div className="flex-1 border-t border-border/50" />
+            <span className="text-sm text-muted-foreground">or search by name</span>
+            <div className="flex-1 border-t border-border/50" />
+          </div>
+
           {/* Search Box */}
           <div className="max-w-2xl mx-auto relative">
             <div className="relative">
               <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
               <input
                 type="text"
-                placeholder="Search by code (e.g., 99213, J1450) or procedure name..."
+                placeholder="Search by procedure name..."
                 className="search-input pl-14 pr-6"
                 value={searchQuery}
                 onChange={(e) => {
@@ -143,25 +219,6 @@ export default function LandingPage() {
                 </CardContent>
               </Card>
             )}
-          </div>
-
-          {/* Example codes */}
-          <div className="max-w-2xl mx-auto mt-6 text-center">
-            <p className="text-sm text-muted-foreground mb-3">Try searching for:</p>
-            <div className="flex flex-wrap justify-center gap-2">
-              {["99213", "J1450", "470", "92626", "H0017"].map((code) => (
-                <button
-                  key={code}
-                  className="px-3 py-1.5 text-sm rounded-full bg-secondary hover:bg-secondary/80 text-secondary-foreground transition-colors"
-                  onClick={() => {
-                    setSearchQuery(code)
-                    setShowResults(true)
-                  }}
-                >
-                  {code}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
       </div>
