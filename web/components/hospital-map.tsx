@@ -24,8 +24,9 @@ interface GeocodedHospital extends Hospital {
 
 interface HospitalMapProps {
   hospitals: Hospital[]
-  onClose: () => void
+  onClose?: () => void
   onHospitalClick?: (hospitalId: number) => void
+  showCloseButton?: boolean
 }
 
 // Cache for geocoded addresses
@@ -109,6 +110,7 @@ export default function HospitalMap({
   hospitals,
   onClose,
   onHospitalClick,
+  showCloseButton = true,
 }: HospitalMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
@@ -258,9 +260,11 @@ export default function HospitalMap({
           <MapPin className="w-4 h-4" />
           Hospital Locations
         </CardTitle>
-        <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0">
-          <X className="w-4 h-4" />
-        </Button>
+        {showCloseButton && onClose && (
+          <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0">
+            <X className="w-4 h-4" />
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="flex-1 p-0 relative">
         {loading && (

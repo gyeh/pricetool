@@ -573,6 +573,8 @@ export default function ServicePage({
                         }
                         isHighlighted={highlightedHospitalId === price.hospital_id}
                         formatPrice={formatPrice}
+                        serviceCode={data.service.code}
+                        serviceCodeType={data.service.code_type}
                       />
                     ))}
                   </div>
@@ -612,13 +614,19 @@ function HospitalRow({
   isLowest,
   isHighlighted,
   formatPrice,
+  serviceCode,
+  serviceCodeType,
 }: {
   price: HospitalPrice
   isLowest: boolean
   isHighlighted: boolean
   formatPrice: (price: number | null) => string
+  serviceCode: string
+  serviceCodeType: string
 }) {
   const displayPrice = price.discounted_cash ?? price.gross_charge
+  const backHref = `/service/${encodeURIComponent(serviceCode)}?type=${encodeURIComponent(serviceCodeType)}`
+  const hospitalHref = `/hospital/${price.hospital_id}?code=${encodeURIComponent(serviceCode)}&type=${encodeURIComponent(serviceCodeType)}&back=${encodeURIComponent(backHref)}`
 
   return (
     <div
@@ -634,9 +642,9 @@ function HospitalRow({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <h3 className="font-semibold text-foreground">
+            <Link href={hospitalHref} className="font-semibold text-foreground hover:text-primary transition-colors">
               {price.hospital_name}
-            </h3>
+            </Link>
             {isLowest && (
               <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700">
                 Lowest
