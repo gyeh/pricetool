@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { query } from "@/lib/db"
+import { getCodeDescription } from "@/lib/code-descriptions"
 
 interface ServiceInfo {
   code: string
@@ -60,6 +61,8 @@ export async function GET(
     }
 
     const service = serviceResults[0]
+    const primaryDescription =
+      getCodeDescription(service.code_type, service.code) ?? service.description
 
     // Get hospital prices - prioritize discounted cash prices
     const priceQuery = `
@@ -154,7 +157,10 @@ export async function GET(
       })
 
     return NextResponse.json({
-      service,
+      service: {
+        ...service,
+        description: primaryDescription,
+      },
       prices: hospitalPrices,
     })
   } catch (error) {
