@@ -11,12 +11,66 @@ import {
   MapPin,
   TrendingDown,
   AlertCircle,
-  Map,
+  Map as MapIcon,
   Search,
   ArrowUpDown,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+
+const codeTypeDescriptions = new Map<string, string>([
+  ["CPT", "Standard codes for medical procedures and services performed by clinicians."],
+  ["HCPCS", "Codes for medical services supplies and equipment used for billing."],
+  ["ICD", "Codes that describe diagnoses and medical conditions being treated."],
+  ["DRG", "Hospital inpatient case groups used to determine payment for a stay."],
+  ["MS-DRG", "Medicare severity-adjusted DRG groups for inpatient hospital payment."],
+  ["R-DRG", "Refined DRG categories that add more clinical detail than basic DRGs."],
+  ["S-DRG", "Severity-based DRG categories that account for how sick the patient is."],
+  ["APS-DRG", "All-patient severity-adjusted DRG groups used across broader populations."],
+  ["AP-DRG", "All-patient DRG categories for grouping inpatient hospital stays."],
+  ["APR-DRG", "All-patient refined DRG groups with severity and mortality risk levels."],
+  ["TRIS-DRG", "TRICARE DRG categories used for military health system payment."],
+  ["APC", "Outpatient hospital payment categories used by Medicare."],
+  ["NDC", "National Drug Code that identifies a specific medication and package."],
+  ["HIPPS", "Codes used for payment in post-acute care settings like rehab and skilled nursing."],
+  ["LOCAL", "Hospital-specific internal billing code used when no standard code fits."],
+  ["EAPG", "Enhanced outpatient grouping codes used to price outpatient services."],
+  ["CDT", "Standard codes for dental procedures and services."],
+  ["RC", "Revenue center code that identifies the hospital department or service area billed."],
+  ["CDM", "Hospital chargemaster code for a billable item service or supply."],
+  ["CMG", "Case-mix group used to classify rehabilitation cases for payment."],
+  ["MS-LTC-DRG", "Medicare severity DRG categories tailored to long-term care hospitals."],
+])
+
+function getCodeTypeDescription(codeType: string): string | null {
+  return codeTypeDescriptions.get(codeType.trim().toUpperCase()) ?? null
+}
+
+function CodeTypeBadge({
+  codeType,
+  className,
+}: {
+  codeType: string
+  className: string
+}) {
+  const description = getCodeTypeDescription(codeType)
+
+  return (
+    <span className="relative inline-flex group">
+      <span className={className}>
+        {codeType}
+      </span>
+      {description && (
+        <span
+          role="tooltip"
+          className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 -translate-x-1/2 rounded-md border border-border/60 bg-card px-3 py-2 text-left text-xs font-normal text-card-foreground shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+        >
+          {description}
+        </span>
+      )}
+    </span>
+  )
+}
 
 // Dynamic import to avoid SSR issues with Leaflet
 const HospitalMap = dynamic(() => import("@/components/hospital-map"), {
@@ -370,9 +424,10 @@ export default function ServicePage({
                             >
                               <div className="flex items-center gap-2">
                                 <span className="font-semibold text-sm">{result.code}</span>
-                                <span className="px-1.5 py-0.5 text-xs font-medium rounded-full bg-warm-100 text-warm-700">
-                                  {result.code_type}
-                                </span>
+                                <CodeTypeBadge
+                                  codeType={result.code_type}
+                                  className="px-1.5 py-0.5 text-xs font-medium rounded-full bg-warm-100 text-warm-700"
+                                />
                                 <span className="text-sm text-muted-foreground truncate">
                                   {result.description}
                                 </span>
@@ -406,11 +461,12 @@ export default function ServicePage({
             {/* Service Header */}
             <div className="mb-10">
               <div className="flex items-center gap-3 mb-4">
-                <span className="text-3xl md:text-4xl font-bold text-foreground">
-                  {data.service.code}
-                </span>
+                <CodeTypeBadge
+                  codeType={data.service.code_type}
+                  className="px-3 py-1 text-sm font-medium rounded-full bg-primary/10 text-primary"
+                />
                 <span className="px-3 py-1 text-sm font-medium rounded-full bg-primary/10 text-primary">
-                  {data.service.code_type}
+                  {data.service.code}
                 </span>
               </div>
               <h1 className="text-xl md:text-2xl text-muted-foreground max-w-3xl leading-relaxed">
@@ -494,7 +550,7 @@ export default function ServicePage({
                     onClick={() => setShowMap(!showMap)}
                     className="hidden md:flex items-center gap-2"
                   >
-                    <Map className="w-4 h-4" />
+                    <MapIcon className="w-4 h-4" />
                     {showMap ? "Hide Map" : "Show Map"}
                   </Button>
                 </div>
