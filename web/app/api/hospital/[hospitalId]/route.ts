@@ -179,7 +179,7 @@ export async function GET(
         sc.maximum,
         sc.additional_notes AS standard_charge_notes,
         pc.id AS payer_charge_id,
-        pc.payer_name,
+        py.name AS payer_name,
         p.name AS plan_name,
         pc.methodology,
         pc.standard_charge_dollar AS negotiated_dollar,
@@ -194,6 +194,7 @@ export async function GET(
       JOIN codes c ON c.id = ic.code_id
       JOIN standard_charges sc ON sc.item_id = sci.id
       LEFT JOIN payer_charges pc ON pc.standard_charge_id = sc.id
+      LEFT JOIN payers py ON py.id = pc.payer_id
       LEFT JOIN plans p ON p.id = pc.plan_id
       WHERE sci.hospital_id = $1
         AND c.code = $2
@@ -202,7 +203,7 @@ export async function GET(
         sc.setting,
         sc.discounted_cash NULLS LAST,
         sc.gross_charge NULLS LAST,
-        pc.payer_name NULLS LAST,
+        py.name NULLS LAST,
         p.name NULLS LAST
       `,
       [parsedHospitalId, code, codeType]

@@ -45,15 +45,19 @@ type Modifier struct {
 type ModifierPayerInfo struct {
 	ID          int32  `json:"id"`
 	ModifierID  int32  `json:"modifier_id"`
-	PayerName   string `json:"payer_name"`
 	PlanID      int32  `json:"plan_id"`
 	Description string `json:"description"`
+	PayerID     int32  `json:"payer_id"`
+}
+
+type Payer struct {
+	ID   int32  `json:"id"`
+	Name string `json:"name"`
 }
 
 type PayerCharge struct {
 	ID                       int32          `json:"id"`
 	StandardChargeID         int32          `json:"standard_charge_id"`
-	PayerName                string         `json:"payer_name"`
 	PlanID                   int32          `json:"plan_id"`
 	Methodology              string         `json:"methodology"`
 	StandardChargeDollar     pgtype.Numeric `json:"standard_charge_dollar"`
@@ -65,6 +69,7 @@ type PayerCharge struct {
 	Percentile90th           pgtype.Numeric `json:"percentile_90th"`
 	Count                    pgtype.Text    `json:"count"`
 	AdditionalNotes          pgtype.Text    `json:"additional_notes"`
+	PayerID                  int32          `json:"payer_id"`
 }
 
 type Plan struct {

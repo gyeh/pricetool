@@ -15,6 +15,7 @@ type Querier interface {
 	CountItemCodes(ctx context.Context) (int32, error)
 	CountItems(ctx context.Context) (int32, error)
 	CountPayerCharges(ctx context.Context) (int32, error)
+	CountPayers(ctx context.Context) (int32, error)
 	CountPlans(ctx context.Context) (int32, error)
 	// Read queries (used by tests)
 	GetFirstHospital(ctx context.Context) (GetFirstHospitalRow, error)
@@ -29,6 +30,7 @@ type Querier interface {
 	ListItemDescriptions(ctx context.Context) ([]string, error)
 	ListPayerDetails(ctx context.Context) ([]ListPayerDetailsRow, error)
 	UpsertCode(ctx context.Context, arg UpsertCodeParams) (int32, error)
+	UpsertPayer(ctx context.Context, name string) (int32, error)
 	UpsertPlan(ctx context.Context, name string) (int32, error)
 }
 

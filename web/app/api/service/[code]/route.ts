@@ -75,7 +75,7 @@ export async function GET(
         sc.discounted_cash,
         sc.minimum,
         sc.maximum,
-        pc.payer_name,
+        py.name as payer_name,
         p.name as plan_name,
         pc.standard_charge_dollar as negotiated_dollar,
         pc.methodology,
@@ -86,6 +86,7 @@ export async function GET(
       JOIN hospitals h ON h.id = sci.hospital_id
       JOIN standard_charges sc ON sc.item_id = sci.id
       LEFT JOIN payer_charges pc ON pc.standard_charge_id = sc.id
+      LEFT JOIN payers py ON py.id = pc.payer_id
       LEFT JOIN plans p ON p.id = pc.plan_id
       WHERE c.code = $1
         ${codeType ? "AND c.code_type = $2" : ""}

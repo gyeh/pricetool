@@ -28,9 +28,9 @@ func main() {
 
 	if *inputFile == "" {
 		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  CSV/JSON → Parquet: hospital_to_duckdb -file input.csv [-out output.parquet] [-batch N]\n")
-		fmt.Fprintf(os.Stderr, "                      hospital_to_duckdb -file input.json [-out output.parquet] [-batch N]\n")
-		fmt.Fprintf(os.Stderr, "  Parquet → PG:       hospital_to_duckdb -file input.parquet -pg 'postgres://user:pass@host/db'\n")
+		fmt.Fprintf(os.Stderr, "  CSV/JSON → Parquet: hospital_loader -file input.csv [-out output.parquet] [-batch N]\n")
+		fmt.Fprintf(os.Stderr, "                      hospital_loader -file input.json [-out output.parquet] [-batch N]\n")
+		fmt.Fprintf(os.Stderr, "  Parquet → PG:       hospital_loader -file input.parquet -pg 'postgres://user:pass@host/db'\n")
 		os.Exit(1)
 	}
 

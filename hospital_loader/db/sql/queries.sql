@@ -32,9 +32,15 @@ VALUES ($1)
 ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
 RETURNING id;
 
+-- name: UpsertPayer :one
+INSERT INTO payers (name)
+VALUES ($1)
+ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+RETURNING id;
+
 -- name: InsertPayerCharges :copyfrom
 INSERT INTO payer_charges
-  (standard_charge_id, payer_name, plan_id, methodology,
+  (standard_charge_id, payer_id, plan_id, methodology,
    standard_charge_dollar, standard_charge_percentage,
    standard_charge_algorithm, estimated_amount, median_amount,
    percentile_10th, percentile_90th, count, additional_notes)
@@ -73,13 +79,17 @@ ORDER BY sci.description;
 SELECT count(*)::int FROM payer_charges;
 
 -- name: ListPayerDetails :many
-SELECT pc.payer_name, p.name as plan_name, pc.standard_charge_dollar, pc.methodology
+SELECT py.name as payer_name, p.name as plan_name, pc.standard_charge_dollar, pc.methodology
 FROM payer_charges pc
+JOIN payers py ON py.id = pc.payer_id
 JOIN plans p ON p.id = pc.plan_id
-ORDER BY pc.payer_name;
+ORDER BY py.name;
 
 -- name: CountPlans :one
 SELECT count(*)::int FROM plans;
+
+-- name: CountPayers :one
+SELECT count(*)::int FROM payers;
 
 -- name: GetItemDrugInfo :one
 SELECT drug_unit, drug_unit_type

@@ -82,6 +82,17 @@ func (q *Queries) CountPayerCharges(ctx context.Context) (int32, error) {
 	return column_1, err
 }
 
+const countPayers = `-- name: CountPayers :one
+SELECT count(*)::int FROM payers
+`
+
+func (q *Queries) CountPayers(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countPayers)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countPlans = `-- name: CountPlans :one
 SELECT count(*)::int FROM plans
 `
@@ -204,7 +215,7 @@ func (q *Queries) InsertItemCode(ctx context.Context, arg InsertItemCodeParams) 
 
 type InsertPayerChargesParams struct {
 	StandardChargeID         int32          `json:"standard_charge_id"`
-	PayerName                string         `json:"payer_name"`
+	PayerID                  int32          `json:"payer_id"`
 	PlanID                   int32          `json:"plan_id"`
 	Methodology              string         `json:"methodology"`
 	StandardChargeDollar     pgtype.Numeric `json:"standard_charge_dollar"`
@@ -334,10 +345,11 @@ func (q *Queries) ListItemDescriptions(ctx context.Context) ([]string, error) {
 }
 
 const listPayerDetails = `-- name: ListPayerDetails :many
-SELECT pc.payer_name, p.name as plan_name, pc.standard_charge_dollar, pc.methodology
+SELECT py.name as payer_name, p.name as plan_name, pc.standard_charge_dollar, pc.methodology
 FROM payer_charges pc
+JOIN payers py ON py.id = pc.payer_id
 JOIN plans p ON p.id = pc.plan_id
-ORDER BY pc.payer_name
+ORDER BY py.name
 `
 
 type ListPayerDetailsRow struct {
@@ -386,6 +398,20 @@ type UpsertCodeParams struct {
 
 func (q *Queries) UpsertCode(ctx context.Context, arg UpsertCodeParams) (int32, error) {
 	row := q.db.QueryRow(ctx, upsertCode, arg.Code, arg.CodeType)
+	var id int32
+	err := row.Scan(&id)
+	return id, err
+}
+
+const upsertPayer = `-- name: UpsertPayer :one
+INSERT INTO payers (name)
+VALUES ($1)
+ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+RETURNING id
+`
+
+func (q *Queries) UpsertPayer(ctx context.Context, name string) (int32, error) {
+	row := q.db.QueryRow(ctx, upsertPayer, name)
 	var id int32
 	err := row.Scan(&id)
 	return id, err

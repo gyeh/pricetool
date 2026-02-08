@@ -30,7 +30,7 @@ func (r *iteratorForInsertPayerCharges) Next() bool {
 func (r iteratorForInsertPayerCharges) Values() ([]interface{}, error) {
 	return []interface{}{
 		r.rows[0].StandardChargeID,
-		r.rows[0].PayerName,
+		r.rows[0].PayerID,
 		r.rows[0].PlanID,
 		r.rows[0].Methodology,
 		r.rows[0].StandardChargeDollar,
@@ -50,5 +50,5 @@ func (r iteratorForInsertPayerCharges) Err() error {
 }
 
 func (q *Queries) InsertPayerCharges(ctx context.Context, arg []InsertPayerChargesParams) (int64, error) {
-	return q.db.CopyFrom(ctx, []string{"payer_charges"}, []string{"standard_charge_id", "payer_name", "plan_id", "methodology", "standard_charge_dollar", "standard_charge_percentage", "standard_charge_algorithm", "estimated_amount", "median_amount", "percentile_10th", "percentile_90th", "count", "additional_notes"}, &iteratorForInsertPayerCharges{rows: arg})
+	return q.db.CopyFrom(ctx, []string{"payer_charges"}, []string{"standard_charge_id", "payer_id", "plan_id", "methodology", "standard_charge_dollar", "standard_charge_percentage", "standard_charge_algorithm", "estimated_amount", "median_amount", "percentile_10th", "percentile_90th", "count", "additional_notes"}, &iteratorForInsertPayerCharges{rows: arg})
 }

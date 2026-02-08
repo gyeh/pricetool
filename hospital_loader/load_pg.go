@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"hospital_to_duckdb/db"
+	"hospital_loader/db"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -62,6 +62,8 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 	codeCache := make(map[string]int32)
 	// Plan cache: plan_name → plan_id
 	planCache := make(map[string]int32)
+	// Payer cache: payer_name → payer_id
+	payerCache := make(map[string]int32)
 
 	const readBatch = 8192
 	buf := make([]HospitalChargeRow, readBatch)
@@ -109,9 +111,9 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 
 		// Insert standard_charge_item
 		itemID, err := q.InsertStandardChargeItem(ctx, db.InsertStandardChargeItemParams{
-			HospitalID:  hospitalID,
-			Description: sanitizeUTF8(first.Description),
-			DrugUnit:    floatToNumeric(first.DrugUnitOfMeasurement),
+			HospitalID:   hospitalID,
+			Description:  sanitizeUTF8(first.Description),
+			DrugUnit:     floatToNumeric(first.DrugUnitOfMeasurement),
 			DrugUnitType: optToPgText(first.DrugTypeOfMeasurement),
 		})
 		if err != nil {
@@ -198,6 +200,15 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 					methodology = sanitizeUTF8(*pr.Methodology)
 				}
 
+				payerID, ok := payerCache[payerName]
+				if !ok {
+					payerID, err = q.UpsertPayer(ctx, payerName)
+					if err != nil {
+						return fmt.Errorf("upsert payer %q: %w", payerName, err)
+					}
+					payerCache[payerName] = payerID
+				}
+
 				planID, ok := planCache[planName]
 				if !ok {
 					planID, err = q.UpsertPlan(ctx, planName)
@@ -209,7 +220,7 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 
 				pendingPayers = append(pendingPayers, db.InsertPayerChargesParams{
 					StandardChargeID:         chargeID,
-					PayerName:                payerName,
+					PayerID:                  payerID,
 					PlanID:                   planID,
 					Methodology:              methodology,
 					StandardChargeDollar:     floatToNumeric(pr.NegotiatedDollar),
@@ -334,6 +345,7 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 	fmt.Printf("  Payer charges:  %d\n", payerCount)
 	fmt.Printf("  Codes cached:   %d\n", len(codeCache))
 	fmt.Printf("  Plans cached:   %d\n", len(planCache))
+	fmt.Printf("  Payers cached:  %d\n", len(payerCache))
 	fmt.Printf("  Throughput:     %.0f rows/s\n", float64(rowsRead)/elapsed.Seconds())
 
 	return nil

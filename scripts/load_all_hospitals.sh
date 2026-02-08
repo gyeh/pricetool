@@ -87,7 +87,7 @@ echo ""
 # Step 2: Build tools
 echo "[2/4] Building tools..."
 go build -o pricetool ./parser
-(cd hospital_to_duckdb && go build -o "$SCRIPT_DIR/hospital_loader" .)
+(cd hospital_loader && go build -o "$SCRIPT_DIR/hospital_loader" .)
 echo "  Build complete."
 echo ""
 

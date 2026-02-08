@@ -1,4 +1,4 @@
-module hospital_to_duckdb
+module hospital_loader
 
 go 1.25.5
 
