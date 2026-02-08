@@ -201,10 +201,16 @@ func (r *CSVReader) parseHeaderMeta(headerRow, valueRow []string) {
 }
 
 func (r *CSVReader) detectFormat() csvFormat {
+	// Tall format has explicit payer_name/plan_name columns.
+	// Check via direct map lookup before scanning for Wide indicators,
+	// since map iteration order is non-deterministic.
+	if _, ok := r.colIdx["payer_name"]; ok {
+		return formatTall
+	}
+	if _, ok := r.colIdx["plan_name"]; ok {
+		return formatTall
+	}
 	for k := range r.colIdx {
-		if k == "payer_name" || k == "plan_name" {
-			return formatTall
-		}
 		if strings.Contains(k, "|") && strings.Contains(k, "negotiated_dollar") {
 			return formatWide
 		}
