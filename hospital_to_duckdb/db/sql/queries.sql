@@ -39,3 +39,56 @@ INSERT INTO payer_charges
    standard_charge_algorithm, estimated_amount, median_amount,
    percentile_10th, percentile_90th, count, additional_notes)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+
+-- Read queries (used by tests)
+
+-- name: GetFirstHospital :one
+SELECT name, version, addresses[1]::text as first_address FROM hospitals LIMIT 1;
+
+-- name: CountItems :one
+SELECT count(*)::int FROM standard_charge_items;
+
+-- name: ListItemDescriptions :many
+SELECT description FROM standard_charge_items ORDER BY description;
+
+-- name: CountCodes :one
+SELECT count(*)::int FROM codes;
+
+-- name: CodeExists :one
+SELECT EXISTS(SELECT 1 FROM codes WHERE code = $1 AND code_type = $2);
+
+-- name: CountItemCodes :one
+SELECT count(*)::int FROM item_codes;
+
+-- name: CountCharges :one
+SELECT count(*)::int FROM standard_charges;
+
+-- name: ListChargeValues :many
+SELECT sci.description, sc.gross_charge
+FROM standard_charges sc
+JOIN standard_charge_items sci ON sci.id = sc.item_id
+ORDER BY sci.description;
+
+-- name: CountPayerCharges :one
+SELECT count(*)::int FROM payer_charges;
+
+-- name: ListPayerDetails :many
+SELECT pc.payer_name, p.name as plan_name, pc.standard_charge_dollar, pc.methodology
+FROM payer_charges pc
+JOIN plans p ON p.id = pc.plan_id
+ORDER BY pc.payer_name;
+
+-- name: CountPlans :one
+SELECT count(*)::int FROM plans;
+
+-- name: GetItemDrugInfo :one
+SELECT drug_unit, drug_unit_type
+FROM standard_charge_items
+WHERE description = $1;
+
+-- name: GetItemNotes :one
+SELECT sc.additional_notes as generic_notes, pc.additional_notes as payer_notes
+FROM standard_charges sc
+JOIN standard_charge_items sci ON sci.id = sc.item_id
+JOIN payer_charges pc ON pc.standard_charge_id = sc.id
+WHERE sci.description = $1;

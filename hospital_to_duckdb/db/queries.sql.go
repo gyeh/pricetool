@@ -11,6 +11,145 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const codeExists = `-- name: CodeExists :one
+SELECT EXISTS(SELECT 1 FROM codes WHERE code = $1 AND code_type = $2)
+`
+
+type CodeExistsParams struct {
+	Code     string `json:"code"`
+	CodeType string `json:"code_type"`
+}
+
+func (q *Queries) CodeExists(ctx context.Context, arg CodeExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, codeExists, arg.Code, arg.CodeType)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const countCharges = `-- name: CountCharges :one
+SELECT count(*)::int FROM standard_charges
+`
+
+func (q *Queries) CountCharges(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countCharges)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countCodes = `-- name: CountCodes :one
+SELECT count(*)::int FROM codes
+`
+
+func (q *Queries) CountCodes(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countCodes)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countItemCodes = `-- name: CountItemCodes :one
+SELECT count(*)::int FROM item_codes
+`
+
+func (q *Queries) CountItemCodes(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countItemCodes)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countItems = `-- name: CountItems :one
+SELECT count(*)::int FROM standard_charge_items
+`
+
+func (q *Queries) CountItems(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countItems)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countPayerCharges = `-- name: CountPayerCharges :one
+SELECT count(*)::int FROM payer_charges
+`
+
+func (q *Queries) CountPayerCharges(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countPayerCharges)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countPlans = `-- name: CountPlans :one
+SELECT count(*)::int FROM plans
+`
+
+func (q *Queries) CountPlans(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countPlans)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const getFirstHospital = `-- name: GetFirstHospital :one
+
+SELECT name, version, addresses[1]::text as first_address FROM hospitals LIMIT 1
+`
+
+type GetFirstHospitalRow struct {
+	Name         string `json:"name"`
+	Version      string `json:"version"`
+	FirstAddress string `json:"first_address"`
+}
+
+// Read queries (used by tests)
+func (q *Queries) GetFirstHospital(ctx context.Context) (GetFirstHospitalRow, error) {
+	row := q.db.QueryRow(ctx, getFirstHospital)
+	var i GetFirstHospitalRow
+	err := row.Scan(&i.Name, &i.Version, &i.FirstAddress)
+	return i, err
+}
+
+const getItemDrugInfo = `-- name: GetItemDrugInfo :one
+SELECT drug_unit, drug_unit_type
+FROM standard_charge_items
+WHERE description = $1
+`
+
+type GetItemDrugInfoRow struct {
+	DrugUnit     pgtype.Numeric `json:"drug_unit"`
+	DrugUnitType pgtype.Text    `json:"drug_unit_type"`
+}
+
+func (q *Queries) GetItemDrugInfo(ctx context.Context, description string) (GetItemDrugInfoRow, error) {
+	row := q.db.QueryRow(ctx, getItemDrugInfo, description)
+	var i GetItemDrugInfoRow
+	err := row.Scan(&i.DrugUnit, &i.DrugUnitType)
+	return i, err
+}
+
+const getItemNotes = `-- name: GetItemNotes :one
+SELECT sc.additional_notes as generic_notes, pc.additional_notes as payer_notes
+FROM standard_charges sc
+JOIN standard_charge_items sci ON sci.id = sc.item_id
+JOIN payer_charges pc ON pc.standard_charge_id = sc.id
+WHERE sci.description = $1
+`
+
+type GetItemNotesRow struct {
+	GenericNotes pgtype.Text `json:"generic_notes"`
+	PayerNotes   pgtype.Text `json:"payer_notes"`
+}
+
+func (q *Queries) GetItemNotes(ctx context.Context, description string) (GetItemNotesRow, error) {
+	row := q.db.QueryRow(ctx, getItemNotes, description)
+	var i GetItemNotesRow
+	err := row.Scan(&i.GenericNotes, &i.PayerNotes)
+	return i, err
+}
+
 const insertHospital = `-- name: InsertHospital :one
 INSERT INTO hospitals
   (name, addresses, location_names, npis, license_number, license_state, version, last_updated_on, attester_name)
@@ -136,6 +275,101 @@ func (q *Queries) InsertStandardChargeItem(ctx context.Context, arg InsertStanda
 	var id int32
 	err := row.Scan(&id)
 	return id, err
+}
+
+const listChargeValues = `-- name: ListChargeValues :many
+SELECT sci.description, sc.gross_charge
+FROM standard_charges sc
+JOIN standard_charge_items sci ON sci.id = sc.item_id
+ORDER BY sci.description
+`
+
+type ListChargeValuesRow struct {
+	Description string         `json:"description"`
+	GrossCharge pgtype.Numeric `json:"gross_charge"`
+}
+
+func (q *Queries) ListChargeValues(ctx context.Context) ([]ListChargeValuesRow, error) {
+	rows, err := q.db.Query(ctx, listChargeValues)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChargeValuesRow
+	for rows.Next() {
+		var i ListChargeValuesRow
+		if err := rows.Scan(&i.Description, &i.GrossCharge); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemDescriptions = `-- name: ListItemDescriptions :many
+SELECT description FROM standard_charge_items ORDER BY description
+`
+
+func (q *Queries) ListItemDescriptions(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listItemDescriptions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var description string
+		if err := rows.Scan(&description); err != nil {
+			return nil, err
+		}
+		items = append(items, description)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPayerDetails = `-- name: ListPayerDetails :many
+SELECT pc.payer_name, p.name as plan_name, pc.standard_charge_dollar, pc.methodology
+FROM payer_charges pc
+JOIN plans p ON p.id = pc.plan_id
+ORDER BY pc.payer_name
+`
+
+type ListPayerDetailsRow struct {
+	PayerName            string         `json:"payer_name"`
+	PlanName             string         `json:"plan_name"`
+	StandardChargeDollar pgtype.Numeric `json:"standard_charge_dollar"`
+	Methodology          string         `json:"methodology"`
+}
+
+func (q *Queries) ListPayerDetails(ctx context.Context) ([]ListPayerDetailsRow, error) {
+	rows, err := q.db.Query(ctx, listPayerDetails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPayerDetailsRow
+	for rows.Next() {
+		var i ListPayerDetailsRow
+		if err := rows.Scan(
+			&i.PayerName,
+			&i.PlanName,
+			&i.StandardChargeDollar,
+			&i.Methodology,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertCode = `-- name: UpsertCode :one

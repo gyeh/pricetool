@@ -9,11 +9,25 @@ import (
 )
 
 type Querier interface {
+	CodeExists(ctx context.Context, arg CodeExistsParams) (bool, error)
+	CountCharges(ctx context.Context) (int32, error)
+	CountCodes(ctx context.Context) (int32, error)
+	CountItemCodes(ctx context.Context) (int32, error)
+	CountItems(ctx context.Context) (int32, error)
+	CountPayerCharges(ctx context.Context) (int32, error)
+	CountPlans(ctx context.Context) (int32, error)
+	// Read queries (used by tests)
+	GetFirstHospital(ctx context.Context) (GetFirstHospitalRow, error)
+	GetItemDrugInfo(ctx context.Context, description string) (GetItemDrugInfoRow, error)
+	GetItemNotes(ctx context.Context, description string) (GetItemNotesRow, error)
 	InsertHospital(ctx context.Context, arg InsertHospitalParams) (int32, error)
 	InsertItemCode(ctx context.Context, arg InsertItemCodeParams) error
 	InsertPayerCharges(ctx context.Context, arg []InsertPayerChargesParams) (int64, error)
 	InsertStandardCharge(ctx context.Context, arg InsertStandardChargeParams) (int32, error)
 	InsertStandardChargeItem(ctx context.Context, arg InsertStandardChargeItemParams) (int32, error)
+	ListChargeValues(ctx context.Context) ([]ListChargeValuesRow, error)
+	ListItemDescriptions(ctx context.Context) ([]string, error)
+	ListPayerDetails(ctx context.Context) ([]ListPayerDetailsRow, error)
 	UpsertCode(ctx context.Context, arg UpsertCodeParams) (int32, error)
 	UpsertPlan(ctx context.Context, name string) (int32, error)
 }
