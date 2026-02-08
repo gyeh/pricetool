@@ -211,7 +211,7 @@ func TestLoadParquetToPg(t *testing.T) {
 
 	ctx := context.Background()
 
-	err := loadParquetToPg(ctx, parquetPath, testConnStr, 100)
+	err := loadParquetToPg(ctx, parquetPath, testConnStr, 100, false)
 	if err != nil {
 		t.Fatalf("loadParquetToPg: %v", err)
 	}
@@ -427,5 +427,76 @@ func TestLoadParquetToPg(t *testing.T) {
 	}
 	if !notes.PayerNotes.Valid || notes.PayerNotes.String != "Prior auth required" {
 		t.Errorf("payer_notes = %v, want %q", notes.PayerNotes, "Prior auth required")
+	}
+}
+
+func TestLoadParquetToPg_SkipPayerCharges(t *testing.T) {
+	tdb := setupTestDB(t)
+	defer tdb.teardown()
+
+	parquetPath, _ := writeTestParquet(t)
+	defer os.Remove(parquetPath)
+
+	ctx := context.Background()
+
+	err := loadParquetToPg(ctx, parquetPath, testConnStr, 100, true)
+	if err != nil {
+		t.Fatalf("loadParquetToPg: %v", err)
+	}
+
+	q := db.New(tdb.pool)
+
+	// Items should still be created
+	itemCount, err := q.CountItems(ctx)
+	if err != nil {
+		t.Fatalf("CountItems: %v", err)
+	}
+	if itemCount != 3 {
+		t.Errorf("items = %d, want 3", itemCount)
+	}
+
+	// Charges should still be created
+	chargeCount, err := q.CountCharges(ctx)
+	if err != nil {
+		t.Fatalf("CountCharges: %v", err)
+	}
+	if chargeCount != 3 {
+		t.Errorf("charges = %d, want 3", chargeCount)
+	}
+
+	// Codes should still be created
+	codeCount, err := q.CountCodes(ctx)
+	if err != nil {
+		t.Fatalf("CountCodes: %v", err)
+	}
+	if codeCount != 4 {
+		t.Errorf("codes = %d, want 4", codeCount)
+	}
+
+	// Payer charges should be empty
+	payerChargeCount, err := q.CountPayerCharges(ctx)
+	if err != nil {
+		t.Fatalf("CountPayerCharges: %v", err)
+	}
+	if payerChargeCount != 0 {
+		t.Errorf("payer_charges = %d, want 0", payerChargeCount)
+	}
+
+	// Payers table should be empty
+	payerCount, err := q.CountPayers(ctx)
+	if err != nil {
+		t.Fatalf("CountPayers: %v", err)
+	}
+	if payerCount != 0 {
+		t.Errorf("payers = %d, want 0", payerCount)
+	}
+
+	// Plans table should be empty
+	planCount, err := q.CountPlans(ctx)
+	if err != nil {
+		t.Fatalf("CountPlans: %v", err)
+	}
+	if planCount != 0 {
+		t.Errorf("plans = %d, want 0", planCount)
 	}
 }

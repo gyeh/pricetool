@@ -24,6 +24,7 @@ func main() {
 	outputFile := flag.String("out", "", "Output Parquet file")
 	pgConn := flag.String("pg", "", "PostgreSQL connection string (Parquet → PG mode)")
 	batchSize := flag.Int("batch", 0, "Batch size (default: 10000 for Parquet, 500 for PG)")
+	skipPayerCharges := flag.Bool("skip-payer-charges", true, "Skip parsing/uploading payer_charges (default: true)")
 	flag.Parse()
 
 	if *inputFile == "" {
@@ -38,7 +39,7 @@ func main() {
 		if *batchSize == 0 {
 			*batchSize = 500
 		}
-		if err := loadParquetToPg(context.Background(), *inputFile, *pgConn, *batchSize); err != nil {
+		if err := loadParquetToPg(context.Background(), *inputFile, *pgConn, *batchSize, *skipPayerCharges); err != nil {
 			log.Fatal(err)
 		}
 		return

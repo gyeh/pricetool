@@ -17,7 +17,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
-func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize int) error {
+func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize int, skipPayerCharges bool) error {
 	start := time.Now()
 
 	f, err := os.Open(parquetPath)
@@ -57,6 +57,9 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 		return fmt.Errorf("ping: %w", err)
 	}
 	fmt.Println("Connected to PostgreSQL")
+	if skipPayerCharges {
+		fmt.Println("Skipping payer_charges (use -skip-payer-charges=false to include)")
+	}
 
 	// Code cache: "CODE\tTYPE" → code_id
 	codeCache := make(map[string]int32)
@@ -186,53 +189,55 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 			chargeCount++
 
 			// Accumulate payer_charge rows for bulk COPY
-			for _, pr := range g.rows {
-				if pr.PayerName == nil {
-					continue
-				}
-				payerName := sanitizeUTF8(*pr.PayerName)
-				planName := ""
-				if pr.PlanName != nil {
-					planName = sanitizeUTF8(*pr.PlanName)
-				}
-				methodology := ""
-				if pr.Methodology != nil {
-					methodology = sanitizeUTF8(*pr.Methodology)
-				}
-
-				payerID, ok := payerCache[payerName]
-				if !ok {
-					payerID, err = q.UpsertPayer(ctx, payerName)
-					if err != nil {
-						return fmt.Errorf("upsert payer %q: %w", payerName, err)
+			if !skipPayerCharges {
+				for _, pr := range g.rows {
+					if pr.PayerName == nil {
+						continue
 					}
-					payerCache[payerName] = payerID
-				}
-
-				planID, ok := planCache[planName]
-				if !ok {
-					planID, err = q.UpsertPlan(ctx, planName)
-					if err != nil {
-						return fmt.Errorf("upsert plan %q: %w", planName, err)
+					payerName := sanitizeUTF8(*pr.PayerName)
+					planName := ""
+					if pr.PlanName != nil {
+						planName = sanitizeUTF8(*pr.PlanName)
 					}
-					planCache[planName] = planID
-				}
+					methodology := ""
+					if pr.Methodology != nil {
+						methodology = sanitizeUTF8(*pr.Methodology)
+					}
 
-				pendingPayers = append(pendingPayers, db.InsertPayerChargesParams{
-					StandardChargeID:         chargeID,
-					PayerID:                  payerID,
-					PlanID:                   planID,
-					Methodology:              methodology,
-					StandardChargeDollar:     floatToNumeric(pr.NegotiatedDollar),
-					StandardChargePercentage: floatToNumeric(pr.NegotiatedPercentage),
-					StandardChargeAlgorithm:  optToPgText(pr.NegotiatedAlgorithm),
-					EstimatedAmount:          floatToNumeric(pr.EstimatedAmount),
-					MedianAmount:             pgtype.Numeric{Valid: false},
-					Percentile10th:           pgtype.Numeric{Valid: false},
-					Percentile90th:           pgtype.Numeric{Valid: false},
-					Count:                    pgtype.Text{Valid: false},
-					AdditionalNotes:          optToPgText(pr.AdditionalPayerNotes),
-				})
+					payerID, ok := payerCache[payerName]
+					if !ok {
+						payerID, err = q.UpsertPayer(ctx, payerName)
+						if err != nil {
+							return fmt.Errorf("upsert payer %q: %w", payerName, err)
+						}
+						payerCache[payerName] = payerID
+					}
+
+					planID, ok := planCache[planName]
+					if !ok {
+						planID, err = q.UpsertPlan(ctx, planName)
+						if err != nil {
+							return fmt.Errorf("upsert plan %q: %w", planName, err)
+						}
+						planCache[planName] = planID
+					}
+
+					pendingPayers = append(pendingPayers, db.InsertPayerChargesParams{
+						StandardChargeID:         chargeID,
+						PayerID:                  payerID,
+						PlanID:                   planID,
+						Methodology:              methodology,
+						StandardChargeDollar:     floatToNumeric(pr.NegotiatedDollar),
+						StandardChargePercentage: floatToNumeric(pr.NegotiatedPercentage),
+						StandardChargeAlgorithm:  optToPgText(pr.NegotiatedAlgorithm),
+						EstimatedAmount:          floatToNumeric(pr.EstimatedAmount),
+						MedianAmount:             pgtype.Numeric{Valid: false},
+						Percentile10th:           pgtype.Numeric{Valid: false},
+						Percentile90th:           pgtype.Numeric{Valid: false},
+						Count:                    pgtype.Text{Valid: false},
+						AdditionalNotes:          optToPgText(pr.AdditionalPayerNotes),
+					})
+				}
 			}
 		}
 
