@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"hospital_to_duckdb/db"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -67,6 +69,7 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 	var (
 		hospitalID  int32
 		tx          pgx.Tx
+		q           *db.Queries
 		itemCount   int
 		chargeCount int
 		payerCount  int64
@@ -79,26 +82,15 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 		txItemCount int
 
 		// Accumulated payer_charges for bulk COPY within a transaction
-		pendingPayers [][]interface{}
+		pendingPayers []db.InsertPayerChargesParams
 	)
-
-	payerCopyCols := []string{
-		"standard_charge_id", "payer_name", "plan_id", "methodology",
-		"standard_charge_dollar", "standard_charge_percentage",
-		"standard_charge_algorithm", "estimated_amount", "median_amount",
-		"percentile_10th", "percentile_90th", "count", "additional_notes",
-	}
 
 	// flushPayers bulk-inserts accumulated payer_charges via COPY.
 	flushPayers := func() error {
 		if len(pendingPayers) == 0 {
 			return nil
 		}
-		copied, err := tx.CopyFrom(ctx,
-			pgx.Identifier{"payer_charges"},
-			payerCopyCols,
-			pgx.CopyFromRows(pendingPayers),
-		)
+		copied, err := q.InsertPayerCharges(ctx, pendingPayers)
 		if err != nil {
 			return fmt.Errorf("copy payer_charges: %w", err)
 		}
@@ -116,21 +108,12 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 		first := curItemRows[0]
 
 		// Insert standard_charge_item
-		var drugUnit pgtype.Numeric
-		var drugUnitType pgtype.Text
-		if first.DrugUnitOfMeasurement != nil {
-			drugUnit = floatToNumeric(first.DrugUnitOfMeasurement)
-		}
-		if first.DrugTypeOfMeasurement != nil {
-			drugUnitType = pgtype.Text{String: *first.DrugTypeOfMeasurement, Valid: true}
-		}
-
-		var itemID int32
-		err := tx.QueryRow(ctx,
-			`INSERT INTO standard_charge_items (hospital_id, description, drug_unit, drug_unit_type)
-			 VALUES ($1, $2, $3, $4) RETURNING id`,
-			hospitalID, sanitizeUTF8(first.Description), drugUnit, drugUnitType,
-		).Scan(&itemID)
+		itemID, err := q.InsertStandardChargeItem(ctx, db.InsertStandardChargeItemParams{
+			HospitalID:  hospitalID,
+			Description: sanitizeUTF8(first.Description),
+			DrugUnit:    floatToNumeric(first.DrugUnitOfMeasurement),
+			DrugUnitType: optToPgText(first.DrugTypeOfMeasurement),
+		})
 		if err != nil {
 			return fmt.Errorf("insert item: %w", err)
 		}
@@ -142,24 +125,20 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 			cacheKey := cp[0] + "\t" + cp[1]
 			codeID, ok := codeCache[cacheKey]
 			if !ok {
-				err := tx.QueryRow(ctx,
-					`INSERT INTO codes (code, code_type) VALUES ($1, $2)
-					 ON CONFLICT (code, code_type) DO UPDATE SET code = EXCLUDED.code
-					 RETURNING id`,
-					cp[0], cp[1],
-				).Scan(&codeID)
+				codeID, err = q.UpsertCode(ctx, db.UpsertCodeParams{
+					Code:     cp[0],
+					CodeType: cp[1],
+				})
 				if err != nil {
 					return fmt.Errorf("upsert code %s/%s: %w", cp[0], cp[1], err)
 				}
 				codeCache[cacheKey] = codeID
 			}
 
-			_, err := tx.Exec(ctx,
-				`INSERT INTO item_codes (item_id, code_id) VALUES ($1, $2)
-				 ON CONFLICT (item_id, code_id) DO NOTHING`,
-				itemID, codeID,
-			)
-			if err != nil {
+			if err := q.InsertItemCode(ctx, db.InsertItemCodeParams{
+				ItemID: itemID,
+				CodeID: codeID,
+			}); err != nil {
 				return fmt.Errorf("link item-code: %w", err)
 			}
 		}
@@ -189,20 +168,16 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 				modifierCodes = strings.Split(*r.Modifiers, "|")
 			}
 
-			var chargeID int32
-			err := tx.QueryRow(ctx,
-				`INSERT INTO standard_charges
-				 (item_id, setting, gross_charge, discounted_cash, minimum, maximum, modifier_codes, additional_notes)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-				itemID,
-				r.Setting,
-				floatToNumeric(r.GrossCharge),
-				floatToNumeric(r.DiscountedCash),
-				floatToNumeric(r.MinCharge),
-				floatToNumeric(r.MaxCharge),
-				modifierCodes,
-				ptrToText(r.AdditionalGenericNotes),
-			).Scan(&chargeID)
+			chargeID, err := q.InsertStandardCharge(ctx, db.InsertStandardChargeParams{
+				ItemID:          itemID,
+				Setting:         r.Setting,
+				GrossCharge:     floatToNumeric(r.GrossCharge),
+				DiscountedCash:  floatToNumeric(r.DiscountedCash),
+				Minimum:         floatToNumeric(r.MinCharge),
+				Maximum:         floatToNumeric(r.MaxCharge),
+				ModifierCodes:   modifierCodes,
+				AdditionalNotes: optToPgText(r.AdditionalGenericNotes),
+			})
 			if err != nil {
 				return fmt.Errorf("insert charge: %w", err)
 			}
@@ -225,32 +200,27 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 
 				planID, ok := planCache[planName]
 				if !ok {
-					err := tx.QueryRow(ctx,
-						`INSERT INTO plans (name) VALUES ($1)
-						 ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-						 RETURNING id`,
-						planName,
-					).Scan(&planID)
+					planID, err = q.UpsertPlan(ctx, planName)
 					if err != nil {
 						return fmt.Errorf("upsert plan %q: %w", planName, err)
 					}
 					planCache[planName] = planID
 				}
 
-				pendingPayers = append(pendingPayers, []interface{}{
-					chargeID,
-					payerName,
-					planID,
-					methodology,
-					floatToNumeric(pr.NegotiatedDollar),
-					floatToNumeric(pr.NegotiatedPercentage),
-					ptrToText(pr.NegotiatedAlgorithm),
-					floatToNumeric(pr.EstimatedAmount),
-					pgtype.Numeric{Valid: false}, // median_amount (not in CSV)
-					pgtype.Numeric{Valid: false}, // percentile_10th
-					pgtype.Numeric{Valid: false}, // percentile_90th
-					pgtype.Text{Valid: false},    // count
-					ptrToText(pr.AdditionalPayerNotes),
+				pendingPayers = append(pendingPayers, db.InsertPayerChargesParams{
+					StandardChargeID:         chargeID,
+					PayerName:                payerName,
+					PlanID:                   planID,
+					Methodology:              methodology,
+					StandardChargeDollar:     floatToNumeric(pr.NegotiatedDollar),
+					StandardChargePercentage: floatToNumeric(pr.NegotiatedPercentage),
+					StandardChargeAlgorithm:  optToPgText(pr.NegotiatedAlgorithm),
+					EstimatedAmount:          floatToNumeric(pr.EstimatedAmount),
+					MedianAmount:             pgtype.Numeric{Valid: false},
+					Percentile10th:           pgtype.Numeric{Valid: false},
+					Percentile90th:           pgtype.Numeric{Valid: false},
+					Count:                    pgtype.Text{Valid: false},
+					AdditionalNotes:          optToPgText(pr.AdditionalPayerNotes),
 				})
 			}
 		}
@@ -260,10 +230,19 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 		return nil
 	}
 
+	// beginTx starts a new transaction and creates a Queries wrapper.
+	beginTx := func() error {
+		tx, err = pool.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		q = db.New(tx)
+		return nil
+	}
+
 	// Start first transaction
-	tx, err = pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+	if err := beginTx(); err != nil {
+		return err
 	}
 
 	for {
@@ -275,7 +254,7 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 
 			// Insert hospital from first row
 			if hospitalID == 0 {
-				hospitalID, err = insertHospitalFromRow(ctx, tx, &row)
+				hospitalID, err = insertHospitalFromRow(ctx, q, &row)
 				if err != nil {
 					tx.Rollback(ctx)
 					return fmt.Errorf("insert hospital: %w", err)
@@ -299,9 +278,8 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 					if err := tx.Commit(ctx); err != nil {
 						return fmt.Errorf("commit: %w", err)
 					}
-					tx, err = pool.Begin(ctx)
-					if err != nil {
-						return fmt.Errorf("begin tx: %w", err)
+					if err := beginTx(); err != nil {
+						return err
 					}
 					txItemCount = 0
 				}
@@ -361,7 +339,7 @@ func loadParquetToPg(ctx context.Context, parquetPath, connStr string, batchSize
 	return nil
 }
 
-func insertHospitalFromRow(ctx context.Context, tx pgx.Tx, row *HospitalChargeRow) (int32, error) {
+func insertHospitalFromRow(ctx context.Context, q *db.Queries, row *HospitalChargeRow) (int32, error) {
 	date, err := time.Parse("2006-01-02", row.LastUpdatedOn)
 	if err != nil {
 		date, err = time.Parse("01/02/2006", row.LastUpdatedOn)
@@ -379,22 +357,17 @@ func insertHospitalFromRow(ctx context.Context, tx pgx.Tx, row *HospitalChargeRo
 		locationNames = []string{sanitizeUTF8(row.HospitalLocation)}
 	}
 
-	var id int32
-	err = tx.QueryRow(ctx,
-		`INSERT INTO hospitals
-		 (name, addresses, location_names, npis, license_number, license_state, version, last_updated_on, attester_name)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-		sanitizeUTF8(row.HospitalName),
-		addresses,
-		locationNames,
-		nil, // npis not in CSV
-		ptrToText(row.LicenseNumber),
-		ptrToText(row.LicenseState),
-		sanitizeUTF8(row.Version),
-		pgtype.Date{Time: date, Valid: true},
-		pgtype.Text{Valid: false}, // attester_name
-	).Scan(&id)
-	return id, err
+	return q.InsertHospital(ctx, db.InsertHospitalParams{
+		Name:          sanitizeUTF8(row.HospitalName),
+		Addresses:     addresses,
+		LocationNames: locationNames,
+		Npis:          nil,
+		LicenseNumber: optToPgText(row.LicenseNumber),
+		LicenseState:  optToPgText(row.LicenseState),
+		Version:       sanitizeUTF8(row.Version),
+		LastUpdatedOn: pgtype.Date{Time: date, Valid: true},
+		AttesterName:  pgtype.Text{Valid: false},
+	})
 }
 
 // sanitizeUTF8 replaces invalid UTF-8 bytes with spaces.
@@ -497,7 +470,7 @@ func floatToNumeric(f *float64) pgtype.Numeric {
 	return num
 }
 
-func ptrToText(s *string) pgtype.Text {
+func optToPgText(s *string) pgtype.Text {
 	if s == nil || *s == "" {
 		return pgtype.Text{Valid: false}
 	}
