@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
@@ -112,5 +114,184 @@ func TestParquetWriter(t *testing.T) {
 	}
 	if records[1].InNetworkURLs[0] != "https://example.com/file3.json" {
 		t.Errorf("Unexpected URL: %s", records[1].InNetworkURLs[0])
+	}
+}
+
+// TestUnfilteredJSONParquetParity verifies that unfiltered JSON and Parquet output
+// produce identical plan data from the same TOC input.
+func TestUnfilteredJSONParquetParity(t *testing.T) {
+	// Disable all filters
+	CurrentFilter = DefaultFilterConfig()
+
+	tocJSON := `{
+		"reporting_entity_name": "Anthem Inc",
+		"reporting_entity_type": "health_insurance_issuer",
+		"last_updated_on": "2024-06-01",
+		"version": "2.0.0",
+		"reporting_structure": [
+			{
+				"reporting_plans": [
+					{
+						"plan_name": "NY Essential Plan",
+						"plan_id_type": "hios",
+						"plan_id": "12345NY001",
+						"plan_market_type": "individual",
+						"issuer_name": "EmblemHealth"
+					}
+				],
+				"in_network_files": [
+					{"description": "rates", "location": "https://example.com/ny-rates.json"}
+				]
+			},
+			{
+				"reporting_plans": [
+					{
+						"plan_name": "CA Gold Plan",
+						"plan_id_type": "hios",
+						"plan_id": "99999CA002",
+						"plan_market_type": "individual",
+						"issuer_name": "Kaiser Permanente"
+					},
+					{
+						"plan_name": "TX Silver Plan",
+						"plan_id_type": "ein",
+						"plan_id": "123456789",
+						"plan_market_type": "group",
+						"issuer_name": "BCBS Texas",
+						"plan_sponsor_name": "Acme Corp"
+					}
+				],
+				"in_network_files": [
+					{"description": "in-network", "location": "https://example.com/multi1.json"},
+					{"description": "behavioral", "location": "https://example.com/multi2.json"}
+				]
+			},
+			{
+				"reporting_plans": [
+					{
+						"plan_name": "Empty URL Plan",
+						"plan_id_type": "hios",
+						"plan_id": "55555FL003",
+						"plan_market_type": "individual",
+						"issuer_name": "Florida Blue"
+					}
+				],
+				"in_network_files": []
+			}
+		]
+	}`
+
+	// --- Collect JSON plans ---
+	jsonReader := strings.NewReader(tocJSON)
+	jsonParser := NewStreamParser(jsonReader)
+	var jsonPlans []NYSPlanOutput
+	err := jsonParser.Parse(func(plan NYSPlanOutput) {
+		jsonPlans = append(jsonPlans, plan)
+	}, func(stats ParserStats) {})
+	if err != nil {
+		t.Fatalf("JSON parse error: %v", err)
+	}
+
+	// --- Write Parquet plans ---
+	tmpFile, err := os.CreateTemp("", "parity_test_*.parquet")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	parquetReader := strings.NewReader(tocJSON)
+	parquetParser := NewStreamParser(parquetReader)
+	pw, err := NewParquetWriter(tmpPath)
+	if err != nil {
+		t.Fatalf("Failed to create parquet writer: %v", err)
+	}
+	err = parquetParser.Parse(func(plan NYSPlanOutput) {
+		if err := pw.Write(plan); err != nil {
+			t.Fatalf("Failed to write parquet: %v", err)
+		}
+	}, func(stats ParserStats) {})
+	if err != nil {
+		t.Fatalf("Parquet parse error: %v", err)
+	}
+	if err := pw.Close(); err != nil {
+		t.Fatalf("Failed to close parquet writer: %v", err)
+	}
+
+	// --- Read back Parquet ---
+	parquetRecords, err := parquet.ReadFile[NYSPlanParquet](tmpPath)
+	if err != nil {
+		t.Fatalf("Failed to read parquet file: %v", err)
+	}
+
+	// --- Compare counts ---
+	if len(jsonPlans) != len(parquetRecords) {
+		t.Fatalf("Count mismatch: JSON=%d, Parquet=%d", len(jsonPlans), len(parquetRecords))
+	}
+
+	// Expect 4 plans total (1 + 2 + 1) with no filters
+	if len(jsonPlans) != 4 {
+		t.Fatalf("Expected 4 unfiltered plans, got %d", len(jsonPlans))
+	}
+
+	// --- Compare each plan field by field ---
+	for i, jp := range jsonPlans {
+		pr := parquetRecords[i]
+
+		if jp.PlanName != pr.PlanName {
+			t.Errorf("Plan %d PlanName: JSON=%q, Parquet=%q", i, jp.PlanName, pr.PlanName)
+		}
+		if jp.PlanIDType != pr.PlanIDType {
+			t.Errorf("Plan %d PlanIDType: JSON=%q, Parquet=%q", i, jp.PlanIDType, pr.PlanIDType)
+		}
+		if jp.PlanID != pr.PlanID {
+			t.Errorf("Plan %d PlanID: JSON=%q, Parquet=%q", i, jp.PlanID, pr.PlanID)
+		}
+		if jp.PlanMarketType != pr.PlanMarketType {
+			t.Errorf("Plan %d PlanMarketType: JSON=%q, Parquet=%q", i, jp.PlanMarketType, pr.PlanMarketType)
+		}
+		if jp.IssuerName != pr.IssuerName {
+			t.Errorf("Plan %d IssuerName: JSON=%q, Parquet=%q", i, jp.IssuerName, pr.IssuerName)
+		}
+		if jp.Description != pr.Description {
+			t.Errorf("Plan %d Description: JSON=%q, Parquet=%q", i, jp.Description, pr.Description)
+		}
+
+		// Compare URL count
+		if int32(len(jp.InNetworkURLs)) != pr.URLCount {
+			t.Errorf("Plan %d URLCount: JSON len=%d, Parquet=%d", i, len(jp.InNetworkURLs), pr.URLCount)
+		}
+
+		// Compare URLs
+		if len(jp.InNetworkURLs) != len(pr.InNetworkURLs) {
+			t.Errorf("Plan %d URL count: JSON=%d, Parquet=%d", i, len(jp.InNetworkURLs), len(pr.InNetworkURLs))
+		} else {
+			for j, url := range jp.InNetworkURLs {
+				if url != pr.InNetworkURLs[j] {
+					t.Errorf("Plan %d URL %d: JSON=%q, Parquet=%q", i, j, url, pr.InNetworkURLs[j])
+				}
+			}
+		}
+	}
+
+	// --- Also verify JSON serialization round-trips correctly ---
+	// Marshal JSON plans and unmarshal back to confirm no data loss
+	jsonBytes, err := json.Marshal(jsonPlans)
+	if err != nil {
+		t.Fatalf("Failed to marshal JSON plans: %v", err)
+	}
+	var roundTripped []NYSPlanOutput
+	if err := json.Unmarshal(jsonBytes, &roundTripped); err != nil {
+		t.Fatalf("Failed to unmarshal JSON plans: %v", err)
+	}
+	if len(roundTripped) != len(jsonPlans) {
+		t.Fatalf("JSON round-trip count mismatch: %d vs %d", len(roundTripped), len(jsonPlans))
+	}
+	for i, orig := range jsonPlans {
+		rt := roundTripped[i]
+		if orig.PlanName != rt.PlanName || orig.PlanID != rt.PlanID || orig.IssuerName != rt.IssuerName {
+			t.Errorf("Plan %d JSON round-trip mismatch", i)
+		}
 	}
 }
