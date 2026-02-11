@@ -20,6 +20,8 @@ type NYSPlanParquet struct {
 	URLCount       int32    `parquet:"url_count"`
 }
 
+const parquetFlushInterval = 100_000
+
 // ParquetWriter handles writing plans to a Parquet file
 type ParquetWriter struct {
 	file   *os.File
@@ -63,6 +65,14 @@ func (pw *ParquetWriter) Write(plan NYSPlanOutput) error {
 	}
 
 	pw.count++
+
+	// Flush row group periodically to bound memory usage
+	if pw.count%parquetFlushInterval == 0 {
+		if err := pw.writer.Flush(); err != nil {
+			return fmt.Errorf("failed to flush parquet row group: %w", err)
+		}
+	}
+
 	return nil
 }
 

@@ -234,49 +234,8 @@ func (p *StreamParser) parseReportingStructure(onPlan func(NYSPlanOutput), onPro
 
 	// Stream through each reporting structure
 	for p.decoder.More() {
-		var rs ReportingStructure
-		if err := p.decoder.Decode(&rs); err != nil {
-			return fmt.Errorf("error decoding reporting structure: %w", err)
-		}
-
-		p.stats.TotalStructures++
-		p.stats.TotalPlans += int64(len(rs.ReportingPlans))
-
-		// Check if any plan in this structure is NYS-related
-		hasNYSPlan := false
-		for _, plan := range rs.ReportingPlans {
-			if isNYSPlan(plan) {
-				hasNYSPlan = true
-				break
-			}
-		}
-
-		if hasNYSPlan {
-			p.stats.MatchedStructures++
-
-			// Extract in-network URLs
-			var urls []string
-			for _, f := range rs.InNetworkFiles {
-				urls = append(urls, f.Location)
-			}
-
-			// Output each NYS plan with the associated URLs
-			for _, plan := range rs.ReportingPlans {
-				if isNYSPlan(plan) {
-					p.stats.MatchedPlans++
-
-					output := NYSPlanOutput{
-						PlanName:       plan.PlanName,
-						PlanIDType:     plan.PlanIDType,
-						PlanID:         plan.PlanID,
-						PlanMarketType: plan.PlanMarketType,
-						IssuerName:     plan.IssuerName,
-						Description:    generateDescription(plan),
-						InNetworkURLs:  urls,
-					}
-					onPlan(output)
-				}
-			}
+		if err := p.parseOneStructure(onPlan); err != nil {
+			return err
 		}
 
 		// Report progress periodically
@@ -292,6 +251,140 @@ func (p *StreamParser) parseReportingStructure(onPlan func(NYSPlanOutput), onPro
 	}
 
 	return nil
+}
+
+// parseOneStructure streams through a single reporting structure object,
+// decoding plans one at a time to limit per-structure memory usage.
+// Handles either field ordering (reporting_plans before/after in_network_files).
+func (p *StreamParser) parseOneStructure(onPlan func(NYSPlanOutput)) error {
+	// Read opening brace
+	t, err := p.decoder.Token()
+	if err != nil {
+		return fmt.Errorf("error reading structure start: %w", err)
+	}
+	if delim, ok := t.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("expected object start for structure, got %v", t)
+	}
+
+	p.stats.TotalStructures++
+
+	var urls []string
+	var pendingPlans []ReportingPlan
+	urlsResolved := false
+	matchedInStructure := 0
+
+	emitPlan := func(plan ReportingPlan) {
+		matchedInStructure++
+		p.stats.MatchedPlans++
+		onPlan(NYSPlanOutput{
+			PlanName:       plan.PlanName,
+			PlanIDType:     plan.PlanIDType,
+			PlanID:         plan.PlanID,
+			PlanMarketType: plan.PlanMarketType,
+			IssuerName:     plan.IssuerName,
+			Description:    generateDescription(plan),
+			InNetworkURLs:  urls,
+		})
+	}
+
+	for p.decoder.More() {
+		t, err := p.decoder.Token()
+		if err != nil {
+			return fmt.Errorf("error reading structure field: %w", err)
+		}
+		fieldName, ok := t.(string)
+		if !ok {
+			return fmt.Errorf("expected field name, got %T", t)
+		}
+
+		switch fieldName {
+		case "reporting_plans":
+			if err := p.streamArray(func() error {
+				var plan ReportingPlan
+				if err := p.decoder.Decode(&plan); err != nil {
+					return fmt.Errorf("error decoding plan: %w", err)
+				}
+				
+				p.stats.TotalPlans++
+				if !isNYSPlan(plan) {
+					return nil
+				}
+				if urlsResolved {
+					emitPlan(plan)
+				} else {
+					// Buffer matched plans until we have URLs
+					pendingPlans = append(pendingPlans, plan)
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+
+		case "in_network_files":
+			if err := p.streamArray(func() error {
+				var f FileLocation
+				if err := p.decoder.Decode(&f); err != nil {
+					return fmt.Errorf("error decoding file location: %w", err)
+				}
+				urls = append(urls, f.Location)
+				return nil
+			}); err != nil {
+				return err
+			}
+			urlsResolved = true
+
+			// Flush plans that were buffered before URLs were known
+			for _, plan := range pendingPlans {
+				emitPlan(plan)
+			}
+			pendingPlans = nil
+
+		default:
+			var skip json.RawMessage
+			if err := p.decoder.Decode(&skip); err != nil {
+				return fmt.Errorf("error skipping field %s: %w", fieldName, err)
+			}
+		}
+	}
+
+	// Emit any remaining buffered plans (e.g. no in_network_files field)
+	for _, plan := range pendingPlans {
+		emitPlan(plan)
+	}
+
+	if matchedInStructure > 0 {
+		p.stats.MatchedStructures++
+	}
+
+	// Read closing brace
+	_, err = p.decoder.Token()
+	if err != nil {
+		return fmt.Errorf("error reading structure end: %w", err)
+	}
+
+	return nil
+}
+
+// streamArray reads a JSON array token by token, calling fn for each element.
+// fn must consume exactly one element from the decoder per call.
+func (p *StreamParser) streamArray(fn func() error) error {
+	t, err := p.decoder.Token()
+	if err != nil {
+		return fmt.Errorf("error reading array start: %w", err)
+	}
+	if delim, ok := t.(json.Delim); !ok || delim != '[' {
+		return fmt.Errorf("expected array start, got %v", t)
+	}
+
+	for p.decoder.More() {
+		if err := fn(); err != nil {
+			return err
+		}
+	}
+
+	// Read closing bracket
+	_, err = p.decoder.Token()
+	return err
 }
 
 // GetStats returns current parsing statistics

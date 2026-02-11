@@ -4,13 +4,13 @@ package main
 // Based on CMS Price Transparency Guide schema
 
 // TOCFile represents the top-level Table of Contents structure
-type TOCFile struct {
-	ReportingEntityName string               `json:"reporting_entity_name"`
-	ReportingEntityType string               `json:"reporting_entity_type"`
-	LastUpdatedOn       string               `json:"last_updated_on"`
-	Version             string               `json:"version"`
-	ReportingStructure  []ReportingStructure `json:"reporting_structure"`
-}
+//type TOCFile struct {
+//	ReportingEntityName string               `json:"reporting_entity_name"`
+//	ReportingEntityType string               `json:"reporting_entity_type"`
+//	LastUpdatedOn       string               `json:"last_updated_on"`
+//	Version             string               `json:"version"`
+//	ReportingStructure  []ReportingStructure `json:"reporting_structure"`
+//}
 
 // ReportingStructure maps plans to their in-network and allowed amount files
 type ReportingStructure struct {
@@ -23,7 +23,7 @@ type ReportingStructure struct {
 type ReportingPlan struct {
 	PlanName        string `json:"plan_name"`
 	IssuerName      string `json:"issuer_name"`
-	PlanIDType      string `json:"plan_id_type"`   // "ein" or "hios"
+	PlanIDType      string `json:"plan_id_type"` // "ein" or "hios"
 	PlanID          string `json:"plan_id"`
 	PlanSponsorName string `json:"plan_sponsor_name,omitempty"`
 	PlanMarketType  string `json:"plan_market_type"` // "group" or "individual"
