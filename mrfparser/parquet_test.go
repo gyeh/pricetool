@@ -295,3 +295,233 @@ func TestUnfilteredJSONParquetParity(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizedParquetWriter(t *testing.T) {
+	// Create temp file for plans
+	tmpFile, err := os.CreateTemp("", "norm_test_*.parquet")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	planPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(planPath)
+
+	urlPath := strings.TrimSuffix(planPath, ".parquet") + "_urls.parquet"
+	defer os.Remove(urlPath)
+
+	writer, err := NewNormalizedParquetWriter(planPath)
+	if err != nil {
+		t.Fatalf("Failed to create normalized writer: %v", err)
+	}
+
+	// Structure 1: 2 plans sharing 2 URLs
+	plan1a := NYSPlanOutput{
+		PlanName:       "Plan A1",
+		PlanIDType:     "hios",
+		PlanID:         "11111NY001",
+		PlanMarketType: "individual",
+		IssuerName:     "Issuer A",
+		Description:    "Plan A1 desc",
+		InNetworkURLs:  []string{"https://example.com/a.json", "https://example.com/b.json"},
+		StructureID:    1,
+	}
+	plan1b := NYSPlanOutput{
+		PlanName:       "Plan A2",
+		PlanIDType:     "hios",
+		PlanID:         "11111NY002",
+		PlanMarketType: "individual",
+		IssuerName:     "Issuer A",
+		Description:    "Plan A2 desc",
+		InNetworkURLs:  []string{"https://example.com/a.json", "https://example.com/b.json"},
+		StructureID:    1,
+	}
+	// Structure 2: 1 plan with 1 URL
+	plan2 := NYSPlanOutput{
+		PlanName:       "Plan B1",
+		PlanIDType:     "ein",
+		PlanID:         "987654321",
+		PlanMarketType: "group",
+		IssuerName:     "Issuer B",
+		Description:    "Plan B1 desc",
+		InNetworkURLs:  []string{"https://example.com/c.json"},
+		StructureID:    2,
+	}
+
+	for _, p := range []NYSPlanOutput{plan1a, plan1b, plan2} {
+		if err := writer.Write(p); err != nil {
+			t.Fatalf("Failed to write plan: %v", err)
+		}
+	}
+
+	if writer.PlanCount() != 3 {
+		t.Errorf("Expected 3 plan rows, got %d", writer.PlanCount())
+	}
+	// URLs: 2 from structure 1 + 1 from structure 2 = 3 (not 5)
+	if writer.URLCount() != 3 {
+		t.Errorf("Expected 3 URL rows, got %d", writer.URLCount())
+	}
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Failed to close writer: %v", err)
+	}
+
+	// Read back plans
+	planRecords, err := parquet.ReadFile[NormalizedPlanParquet](planPath)
+	if err != nil {
+		t.Fatalf("Failed to read plan parquet: %v", err)
+	}
+	if len(planRecords) != 3 {
+		t.Fatalf("Expected 3 plan records, got %d", len(planRecords))
+	}
+	if planRecords[0].ReportingStructureID != 1 || planRecords[0].PlanName != "Plan A1" {
+		t.Errorf("Plan 0: got structID=%d name=%q", planRecords[0].ReportingStructureID, planRecords[0].PlanName)
+	}
+	if planRecords[1].ReportingStructureID != 1 || planRecords[1].PlanName != "Plan A2" {
+		t.Errorf("Plan 1: got structID=%d name=%q", planRecords[1].ReportingStructureID, planRecords[1].PlanName)
+	}
+	if planRecords[2].ReportingStructureID != 2 || planRecords[2].PlanName != "Plan B1" {
+		t.Errorf("Plan 2: got structID=%d name=%q", planRecords[2].ReportingStructureID, planRecords[2].PlanName)
+	}
+
+	// Read back URLs
+	urlRecords, err := parquet.ReadFile[NormalizedURLParquet](urlPath)
+	if err != nil {
+		t.Fatalf("Failed to read url parquet: %v", err)
+	}
+	if len(urlRecords) != 3 {
+		t.Fatalf("Expected 3 URL records, got %d", len(urlRecords))
+	}
+	// Structure 1 URLs
+	if urlRecords[0].ReportingStructureID != 1 || urlRecords[0].URL != "https://example.com/a.json" {
+		t.Errorf("URL 0: got structID=%d url=%q", urlRecords[0].ReportingStructureID, urlRecords[0].URL)
+	}
+	if urlRecords[1].ReportingStructureID != 1 || urlRecords[1].URL != "https://example.com/b.json" {
+		t.Errorf("URL 1: got structID=%d url=%q", urlRecords[1].ReportingStructureID, urlRecords[1].URL)
+	}
+	// Structure 2 URLs
+	if urlRecords[2].ReportingStructureID != 2 || urlRecords[2].URL != "https://example.com/c.json" {
+		t.Errorf("URL 2: got structID=%d url=%q", urlRecords[2].ReportingStructureID, urlRecords[2].URL)
+	}
+}
+
+func TestNormalizedParquetStreamIntegration(t *testing.T) {
+	// Disable all filters
+	CurrentFilter = DefaultFilterConfig()
+
+	tocJSON := `{
+		"reporting_entity_name": "Anthem Inc",
+		"reporting_entity_type": "health_insurance_issuer",
+		"last_updated_on": "2024-06-01",
+		"version": "2.0.0",
+		"reporting_structure": [
+			{
+				"reporting_plans": [
+					{
+						"plan_name": "Plan X",
+						"plan_id_type": "hios",
+						"plan_id": "11111NY001",
+						"plan_market_type": "individual",
+						"issuer_name": "Issuer X"
+					},
+					{
+						"plan_name": "Plan Y",
+						"plan_id_type": "hios",
+						"plan_id": "11111NY002",
+						"plan_market_type": "individual",
+						"issuer_name": "Issuer X"
+					}
+				],
+				"in_network_files": [
+					{"description": "rates", "location": "https://example.com/r1.json"},
+					{"description": "behavioral", "location": "https://example.com/r2.json"}
+				]
+			},
+			{
+				"reporting_plans": [
+					{
+						"plan_name": "Plan Z",
+						"plan_id_type": "ein",
+						"plan_id": "999999999",
+						"plan_market_type": "group",
+						"issuer_name": "Issuer Z"
+					}
+				],
+				"in_network_files": [
+					{"description": "rates", "location": "https://example.com/r3.json"}
+				]
+			}
+		]
+	}`
+
+	// Create temp file for plans
+	tmpFile, err := os.CreateTemp("", "norm_integration_*.parquet")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	planPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(planPath)
+
+	urlPath := strings.TrimSuffix(planPath, ".parquet") + "_urls.parquet"
+	defer os.Remove(urlPath)
+
+	nw, err := NewNormalizedParquetWriter(planPath)
+	if err != nil {
+		t.Fatalf("Failed to create normalized writer: %v", err)
+	}
+
+	reader := strings.NewReader(tocJSON)
+	parser := NewStreamParser(reader)
+	err = parser.Parse(func(plan NYSPlanOutput) {
+		if err := nw.Write(plan); err != nil {
+			t.Fatalf("Failed to write: %v", err)
+		}
+	}, func(stats ParserStats) {})
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if err := nw.Close(); err != nil {
+		t.Fatalf("Failed to close: %v", err)
+	}
+
+	// Verify plan records
+	planRecords, err := parquet.ReadFile[NormalizedPlanParquet](planPath)
+	if err != nil {
+		t.Fatalf("Failed to read plan parquet: %v", err)
+	}
+	if len(planRecords) != 3 {
+		t.Fatalf("Expected 3 plan records, got %d", len(planRecords))
+	}
+
+	// Plans X and Y should have structure ID 1
+	if planRecords[0].ReportingStructureID != 1 {
+		t.Errorf("Plan X structID: expected 1, got %d", planRecords[0].ReportingStructureID)
+	}
+	if planRecords[1].ReportingStructureID != 1 {
+		t.Errorf("Plan Y structID: expected 1, got %d", planRecords[1].ReportingStructureID)
+	}
+	// Plan Z should have structure ID 2
+	if planRecords[2].ReportingStructureID != 2 {
+		t.Errorf("Plan Z structID: expected 2, got %d", planRecords[2].ReportingStructureID)
+	}
+
+	// Verify URL records: 2 from structure 1, 1 from structure 2 = 3 (not 5)
+	urlRecords, err := parquet.ReadFile[NormalizedURLParquet](urlPath)
+	if err != nil {
+		t.Fatalf("Failed to read url parquet: %v", err)
+	}
+	if len(urlRecords) != 3 {
+		t.Fatalf("Expected 3 URL records, got %d", len(urlRecords))
+	}
+
+	// Verify structure ID linkage
+	if urlRecords[0].ReportingStructureID != 1 {
+		t.Errorf("URL 0 structID: expected 1, got %d", urlRecords[0].ReportingStructureID)
+	}
+	if urlRecords[1].ReportingStructureID != 1 {
+		t.Errorf("URL 1 structID: expected 1, got %d", urlRecords[1].ReportingStructureID)
+	}
+	if urlRecords[2].ReportingStructureID != 2 {
+		t.Errorf("URL 2 structID: expected 2, got %d", urlRecords[2].ReportingStructureID)
+	}
+}

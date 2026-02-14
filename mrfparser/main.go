@@ -211,7 +211,7 @@ Output Fields:
 	// For Parquet, we can stream directly to file
 	// For JSON, we need to collect all plans first (for the wrapper object)
 	var matchedPlans []NYSPlanOutput
-	var parquetWriter *ParquetWriter
+	var parquetWriter *NormalizedParquetWriter
 
 	if !*dryRun && *outputFormat == "parquet" {
 		// Ensure output directory exists
@@ -222,7 +222,7 @@ Output Fields:
 			}
 		}
 
-		parquetWriter, err = NewParquetWriter(*outputFile)
+		parquetWriter, err = NewNormalizedParquetWriter(*outputFile)
 		if err != nil {
 			log.Fatalf("Failed to create parquet writer: %v", err)
 		}
@@ -256,7 +256,7 @@ Output Fields:
 		if *verbose {
 			count := len(matchedPlans)
 			if parquetWriter != nil {
-				count = parquetWriter.Count()
+				count = parquetWriter.PlanCount()
 			}
 			if count%100 == 0 {
 				log.Printf("Found %d NYS plans so far...", count)
@@ -294,7 +294,8 @@ Output Fields:
 		if err := parquetWriter.Close(); err != nil {
 			log.Fatalf("Failed to finalize parquet file: %v", err)
 		}
-		log.Printf("Successfully wrote %d NYS plans to %s (Parquet)", parquetWriter.Count(), *outputFile)
+		log.Printf("Successfully wrote %d plans to %s (Parquet)", parquetWriter.PlanCount(), *outputFile)
+		log.Printf("Successfully wrote %d URLs to %s (Parquet)", parquetWriter.URLCount(), parquetWriter.URLPath())
 	} else {
 		// Write JSON output
 		log.Printf("Writing output to %s...", *outputFile)

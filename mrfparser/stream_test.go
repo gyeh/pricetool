@@ -324,6 +324,10 @@ func TestStreamParser(t *testing.T) {
 	if len(plans) > 0 && len(plans[0].InNetworkURLs) != 1 {
 		t.Errorf("Expected 1 URL for first plan, got %d", len(plans[0].InNetworkURLs))
 	}
+	// Structure ID should be 1 (first reporting structure)
+	if len(plans) > 0 && plans[0].StructureID != 1 {
+		t.Errorf("Expected StructureID 1 for first plan, got %d", plans[0].StructureID)
+	}
 
 	// Verify second plan has 2 URLs
 	if len(plans) > 1 && plans[1].PlanName != "Healthfirst Bronze" {
@@ -331,6 +335,10 @@ func TestStreamParser(t *testing.T) {
 	}
 	if len(plans) > 1 && len(plans[1].InNetworkURLs) != 2 {
 		t.Errorf("Expected 2 URLs for second plan, got %d", len(plans[1].InNetworkURLs))
+	}
+	// Structure ID should be 3 (third reporting structure, CA was second)
+	if len(plans) > 1 && plans[1].StructureID != 3 {
+		t.Errorf("Expected StructureID 3 for second plan, got %d", plans[1].StructureID)
 	}
 }
 

@@ -44,6 +44,7 @@ type NYSPlanOutput struct {
 	IssuerName     string   `json:"issuer_name"`
 	Description    string   `json:"description"`
 	InNetworkURLs  []string `json:"in_network_urls"`
+	StructureID    int64    `json:"-"`
 }
 
 // OutputFile is the complete output structure

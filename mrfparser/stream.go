@@ -284,6 +284,7 @@ func (p *StreamParser) parseOneStructure(onPlan func(NYSPlanOutput)) error {
 			IssuerName:     plan.IssuerName,
 			Description:    generateDescription(plan),
 			InNetworkURLs:  urls,
+			StructureID:    p.stats.TotalStructures,
 		})
 	}
 
@@ -304,7 +305,7 @@ func (p *StreamParser) parseOneStructure(onPlan func(NYSPlanOutput)) error {
 				if err := p.decoder.Decode(&plan); err != nil {
 					return fmt.Errorf("error decoding plan: %w", err)
 				}
-				
+
 				p.stats.TotalPlans++
 				if !isNYSPlan(plan) {
 					return nil
